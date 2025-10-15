@@ -75,9 +75,9 @@
 
                   # VM-specific settings
                   virtualisation.vmVariant = {
-                    virtualisation.memorySize = 4096;
+                    virtualisation.memorySize = 8192;
                     virtualisation.cores = 2;
-                    virtualisation.diskSize = 20480;
+                    virtualisation.diskSize = 51200;
 
                     # Enable graphics for GUI if needed
                     virtualisation.graphics = true;

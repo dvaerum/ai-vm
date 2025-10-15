@@ -8,7 +8,7 @@ A NixOS virtual machine configured for running Claude Code and AI development to
 - Node.js, Python, Rust, and Go development environments
 - SSH access with port forwarding
 - Optional desktop environment (XFCE)
-- 4GB RAM, 2 CPU cores, 20GB disk space
+- 8GB RAM, 2 CPU cores, 50GB disk space
 
 ## Quick Start
 
