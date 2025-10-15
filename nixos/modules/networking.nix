@@ -2,7 +2,7 @@
 
 {
   # Network configuration
-  networking.hostName = "claude-code-vm";
+  networking.hostName = "ai-vm";
   networking.networkmanager.enable = true;
 
   # Enable SSH for remote access

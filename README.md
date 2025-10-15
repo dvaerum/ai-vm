@@ -1,4 +1,4 @@
-# Claude Code VM
+# AI VM
 
 A NixOS virtual machine configured for running Claude Code and AI development tools.
 
@@ -32,7 +32,7 @@ A NixOS virtual machine configured for running Claude Code and AI development to
 
 ## VM Configuration
 
-- **Hostname**: claude-code-vm
+- **Hostname**: ai-vm
 - **User**: dennis (no password required, auto-login enabled)
 - **SSH Port**: 2222 (forwarded from host)
 - **Development Ports**: 3001, 9080 (forwarded to guest 3001, 8080)
