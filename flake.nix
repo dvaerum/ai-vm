@@ -85,7 +85,7 @@
                     # Port forwarding for SSH and development servers
                     virtualisation.forwardPorts = [
                       { from = "host"; host.port = 2222; guest.port = 22; }
-                      { from = "host"; host.port = 3000; guest.port = 3000; }
+                      { from = "host"; host.port = 3001; guest.port = 3001; }
                       { from = "host"; host.port = 9080; guest.port = 8080; }
                     ];
                   };
