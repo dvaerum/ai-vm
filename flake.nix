@@ -52,7 +52,7 @@
         # App to run the VM directly
         apps.default = {
           type = "app";
-          program = "${self.packages.${system}.vm}/bin/run-claude-code-vm-vm";
+          program = "${self.packages.${system}.vm}/bin/run-ai-vm-vm";
         };
 
         # Development shell for working with the flake
