@@ -9,4 +9,6 @@
   services.openssh.enable = true;
   services.openssh.settings.PasswordAuthentication = true;
   services.openssh.settings.PermitEmptyPasswords = true;
+  services.openssh.settings.ChallengeResponseAuthentication = false;
+  services.openssh.settings.UsePAM = false;
 }
