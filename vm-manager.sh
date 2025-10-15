@@ -22,6 +22,8 @@ Examples:
     $0 build    # Build the VM
     $0 run      # Start the VM
     $0 ssh      # Connect to VM via SSH
+
+Note: You can also run 'nix run' to start the VM directly
 EOF
 }
 

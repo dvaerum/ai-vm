@@ -103,6 +103,12 @@
           in
             vm-system.config.system.build.vm;
 
+        # App to run the VM directly
+        apps.default = {
+          type = "app";
+          program = "${self.packages.${system}.vm}/bin/run-${system}-vm";
+        };
+
         # Development shell for working with the flake
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
@@ -113,8 +119,9 @@
 
           shellHook = ''
             echo "Claude Code VM development environment"
+            echo "Run 'nix run' to start the VM"
             echo "Run 'nix build .#vm' to build the VM"
-            echo "Run 'result/bin/run-*-vm' to start the VM"
+            echo "Run 'result/bin/run-*-vm' to start the VM manually"
           '';
         };
       });

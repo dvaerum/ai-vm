@@ -12,13 +12,14 @@ A NixOS virtual machine configured for running Claude Code and AI development to
 
 ## Quick Start
 
-1. Build the VM:
+1. Run the VM directly:
    ```bash
-   nix build .#vm
+   nix run
    ```
 
-2. Run the VM:
+2. Or build and run manually:
    ```bash
+   nix build .#vm
    ./result/bin/run-*-vm
    ```
 
