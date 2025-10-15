@@ -10,6 +10,14 @@
     openssh.authorizedKeys.keys = [ ];
   };
 
+  users.users.dvv = {
+    isNormalUser = true;
+    extraGroups = [ "wheel" "networkmanager" ];
+    hashedPassword = "";
+    shell = pkgs.fish;
+    openssh.authorizedKeys.keys = [ ];
+  };
+
   # Enable sudo for wheel group
   security.sudo.wheelNeedsPassword = false;
 

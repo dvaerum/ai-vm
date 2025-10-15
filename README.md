@@ -27,13 +27,15 @@ A NixOS virtual machine configured for running Claude Code and AI development to
 3. SSH into the VM (from another terminal):
    ```bash
    ssh -p 2222 dennis@localhost
+   # OR
+   ssh -p 2222 dvv@localhost
    ```
    No password required!
 
 ## VM Configuration
 
 - **Hostname**: ai-vm
-- **User**: dennis (no password required, auto-login enabled)
+- **Users**: dennis, dvv (no password required, auto-login enabled for dennis)
 - **SSH Port**: 2222 (forwarded from host)
 - **Development Ports**: 3001, 9080 (forwarded to guest 3001, 8080)
 
