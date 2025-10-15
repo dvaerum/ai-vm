@@ -14,6 +14,11 @@
     unzip
     fish
 
+    # Search and file tools
+    fd
+    ripgrep
+    ripgrep-all
+
     # Development tools
     nodejs_20
     python3
