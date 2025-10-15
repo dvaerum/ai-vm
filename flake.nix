@@ -14,87 +14,30 @@
       {
         packages.vm =
           let
+            # Import module functions
+            usersModule = import ./nixos/modules/users.nix;
+            networkingModule = import ./nixos/modules/networking.nix;
+            packagesModule = import ./nixos/modules/packages.nix;
+            virtualisationModule = import ./nixos/modules/virtualisation.nix;
+
             vm-system = nixpkgs.lib.nixosSystem {
               system = system;
               modules = [
+                ({ config, pkgs, ... }: {
+                  # Allow unfree packages (needed for Claude Code)
+                  nixpkgs.config.allowUnfree = true;
+                })
+                usersModule
+                networkingModule
+                packagesModule
+                virtualisationModule
                 ({ config, pkgs, ... }: {
                   # Basic VM configuration
                   boot.loader.grub.enable = true;
                   boot.loader.grub.device = "/dev/vda";
 
-                  # Network configuration
-                  networking.hostName = "claude-code-vm";
-                  networking.networkmanager.enable = true;
-
-                  # Enable SSH for remote access
-                  services.openssh.enable = true;
-                  services.openssh.settings.PasswordAuthentication = true;
-                  services.openssh.settings.PermitEmptyPasswords = true;
-
-                  # User configuration
-                  users.users.claude = {
-                    isNormalUser = true;
-                    extraGroups = [ "wheel" "networkmanager" ];
-                    hashedPassword = "";
-                    shell = pkgs.fish;
-                    openssh.authorizedKeys.keys = [ ];
-                  };
-
-                  # Enable sudo for wheel group
-                  security.sudo.wheelNeedsPassword = false;
-
-                  # Enable fish shell
-                  programs.fish.enable = true;
-
-                  # Development tools and Claude Code dependencies
-                  environment.systemPackages = with pkgs; [
-                    # Basic system tools
-                    curl
-                    wget
-                    git
-                    vim
-                    nano
-                    htop
-                    tree
-                    unzip
-                    fish
-
-                    # Development tools
-                    nodejs_20
-                    python3
-                    python3Packages.pip
-                    rustc
-                    cargo
-                    go
-
-                    # Build tools
-                    gcc
-                    gnumake
-
-                    # Claude Code and AI tools
-                    # Note: Claude Code would need to be installed separately
-                    # or built from source if available
-                  ];
-
                   # Enable flakes
                   nix.settings.experimental-features = [ "nix-command" "flakes" ];
-
-                  # VM-specific settings
-                  virtualisation.vmVariant = {
-                    virtualisation.memorySize = 8192;
-                    virtualisation.cores = 2;
-                    virtualisation.diskSize = 51200;
-
-                    # Disable graphics for headless operation
-                    virtualisation.graphics = false;
-
-                    # Port forwarding for SSH and development servers
-                    virtualisation.forwardPorts = [
-                      { from = "host"; host.port = 2222; guest.port = 22; }
-                      { from = "host"; host.port = 3001; guest.port = 3001; }
-                      { from = "host"; host.port = 9080; guest.port = 8080; }
-                    ];
-                  };
 
                   # System version
                   system.stateVersion = "23.11";

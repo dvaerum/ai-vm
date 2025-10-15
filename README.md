@@ -5,6 +5,7 @@ A NixOS virtual machine configured for running Claude Code and AI development to
 ## Features
 
 - Pre-configured headless NixOS VM with development tools
+- **Claude Code pre-installed** - Ready to use immediately
 - Node.js, Python, Rust, and Go development environments
 - Fish shell as default shell with modern CLI experience
 - Passwordless SSH access with port forwarding
@@ -25,26 +26,26 @@ A NixOS virtual machine configured for running Claude Code and AI development to
 
 3. SSH into the VM (from another terminal):
    ```bash
-   ssh -p 2222 claude@localhost
+   ssh -p 2222 dennis@localhost
    ```
    No password required!
 
 ## VM Configuration
 
 - **Hostname**: claude-code-vm
-- **User**: claude (no password required)
+- **User**: dennis (no password required, auto-login enabled)
 - **SSH Port**: 2222 (forwarded from host)
 - **Development Ports**: 3001, 9080 (forwarded to guest 3001, 8080)
 
-## Installing Claude Code
+## Using Claude Code
 
-Once in the VM, you can install Claude Code using npm:
+Claude Code is pre-installed and ready to use! Simply SSH into the VM and run:
 
 ```bash
-npm install -g @anthropic/claude-code
+claude-code
 ```
 
-Or follow the official installation instructions from Anthropic.
+No additional installation required.
 
 ## Development
 
