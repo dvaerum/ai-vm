@@ -106,7 +106,7 @@
         # App to run the VM directly
         apps.default = {
           type = "app";
-          program = "${self.packages.${system}.vm}/bin/run-${system}-vm";
+          program = "${self.packages.${system}.vm}/bin/run-claude-code-vm-vm";
         };
 
         # Development shell for working with the flake
