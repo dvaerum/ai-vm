@@ -29,12 +29,13 @@
                   # Enable SSH for remote access
                   services.openssh.enable = true;
                   services.openssh.settings.PasswordAuthentication = true;
+                  services.openssh.settings.PermitEmptyPasswords = true;
 
                   # User configuration
                   users.users.claude = {
                     isNormalUser = true;
                     extraGroups = [ "wheel" "networkmanager" ];
-                    password = "claude";
+                    hashedPassword = "";
                     shell = pkgs.fish;
                     openssh.authorizedKeys.keys = [ ];
                   };
@@ -84,8 +85,8 @@
                     virtualisation.cores = 2;
                     virtualisation.diskSize = 51200;
 
-                    # Enable graphics for GUI if needed
-                    virtualisation.graphics = true;
+                    # Disable graphics for headless operation
+                    virtualisation.graphics = false;
 
                     # Port forwarding for SSH and development servers
                     virtualisation.forwardPorts = [
@@ -94,11 +95,6 @@
                       { from = "host"; host.port = 9080; guest.port = 8080; }
                     ];
                   };
-
-                  # Enable X11 and desktop environment (optional)
-                  services.xserver.enable = true;
-                  services.xserver.displayManager.lightdm.enable = true;
-                  services.xserver.desktopManager.xfce.enable = true;
 
                   # System version
                   system.stateVersion = "23.11";

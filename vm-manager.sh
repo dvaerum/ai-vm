@@ -41,7 +41,7 @@ run_vm() {
 
     echo "Starting Claude Code VM..."
     echo "Use Ctrl+C to stop the VM"
-    echo "SSH access: ssh -p 2222 claude@localhost (password: claude)"
+    echo "SSH access: ssh -p 2222 claude@localhost (no password required)"
     ./result/bin/run-*-vm
 }
 
