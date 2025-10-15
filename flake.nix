@@ -24,8 +24,10 @@
               system = system;
               modules = [
                 ({ config, pkgs, ... }: {
-                  # Allow unfree packages (needed for Claude Code)
-                  nixpkgs.config.allowUnfree = true;
+                  # Allow only Claude Code as unfree package
+                  nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (pkgs.lib.getName pkg) [
+                    "claude-code"
+                  ];
                 })
                 usersModule
                 networkingModule
