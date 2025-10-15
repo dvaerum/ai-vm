@@ -1,0 +1,15 @@
+# Nix build results
+result*
+
+# VM disk images
+*.qcow2
+*.img
+
+# Temporary files
+*.tmp
+.*.swp
+.*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
