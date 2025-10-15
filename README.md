@@ -34,7 +34,7 @@ A NixOS virtual machine configured for running Claude Code and AI development to
 - **Hostname**: claude-code-vm
 - **User**: claude (password: claude)
 - **SSH Port**: 2222 (forwarded from host)
-- **Development Ports**: 3000, 8081 (forwarded to guest 3000, 8080)
+- **Development Ports**: 3000, 9080 (forwarded to guest 3000, 8080)
 
 ## Installing Claude Code
 
