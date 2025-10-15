@@ -35,11 +35,15 @@
                     isNormalUser = true;
                     extraGroups = [ "wheel" "networkmanager" ];
                     password = "claude";
+                    shell = pkgs.fish;
                     openssh.authorizedKeys.keys = [ ];
                   };
 
                   # Enable sudo for wheel group
                   security.sudo.wheelNeedsPassword = false;
+
+                  # Enable fish shell
+                  programs.fish.enable = true;
 
                   # Development tools and Claude Code dependencies
                   environment.systemPackages = with pkgs; [
@@ -52,6 +56,7 @@
                     htop
                     tree
                     unzip
+                    fish
 
                     # Development tools
                     nodejs_20

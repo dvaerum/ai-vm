@@ -6,6 +6,7 @@ A NixOS virtual machine configured for running Claude Code and AI development to
 
 - Pre-configured NixOS VM with development tools
 - Node.js, Python, Rust, and Go development environments
+- Fish shell as default shell with modern CLI experience
 - SSH access with port forwarding
 - Optional desktop environment (XFCE)
 - 8GB RAM, 2 CPU cores, 50GB disk space
