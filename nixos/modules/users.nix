@@ -25,5 +25,11 @@
   services.getty.autologinUser = "dennis";
 
   # Enable fish shell
-  programs.fish.enable = true;
+  programs.fish = {
+    enable = true;
+    interactiveShellInit = ''
+      fish_add_path --prepend /run/wrappers/bin
+      fish_add_path --append /run/current-system/sw/bin
+    '';
+  };
 }
