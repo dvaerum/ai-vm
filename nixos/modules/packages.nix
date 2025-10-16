@@ -10,9 +10,11 @@
     vim
     nano
     htop
+    pstree
     tree
     unzip
     fish
+    rsync
 
     # Search and file tools
     fd
