@@ -118,8 +118,24 @@
   users.users.dennis.extraGroups = pkgs.lib.mkIf enableAudio [ "wheel" "networkmanager" "audio" ];
   users.users.dvv.extraGroups = pkgs.lib.mkIf enableAudio [ "wheel" "networkmanager" "audio" ];
 
-  # Install VM configuration flake at /etc/nixos
-  environment.etc."nixos/flake.nix".text = ''
+  # Create a nixos-rebuild wrapper that uses flakes by default
+  environment.systemPackages = [
+    (pkgs.writeShellScriptBin "nixos-rebuild" ''
+      # Wrapper for nixos-rebuild that automatically uses flakes
+      if [ -f /etc/nixos/flake.nix ]; then
+        # If no --flake argument provided, add it automatically
+        if ! echo "$@" | grep -q -- "--flake"; then
+          exec ${pkgs.nixos-rebuild}/bin/nixos-rebuild "$@" --flake /etc/nixos#${vmName}
+        fi
+      fi
+      # Fall through to normal nixos-rebuild
+      exec ${pkgs.nixos-rebuild}/bin/nixos-rebuild "$@"
+    '')
+  ];
+
+  # Install VM configuration flake templates at /etc/nixos-template
+  # These will be copied to /etc/nixos by the activation script
+  environment.etc."nixos-template/flake.nix".text = ''
     {
       description = "AI VM NixOS Configuration - ${vmName}";
 
@@ -145,7 +161,7 @@
   '';
 
   # Create a flake.lock file to avoid lock file creation issues
-  environment.etc."nixos/flake.lock".text = builtins.toJSON {
+  environment.etc."nixos-template/flake.lock".text = builtins.toJSON {
     nodes = {
       nixpkgs = {
         locked = {
@@ -172,7 +188,7 @@
   };
 
   # Install a complete configuration.nix for the VM
-  environment.etc."nixos/configuration.nix".text = ''
+  environment.etc."nixos-template/configuration.nix".text = ''
     # ${vmName} VM Configuration
     # Edit this file to customize your VM, then run: switch
 
@@ -296,13 +312,15 @@
       # services.docker.enable = true;
       # virtualisation.docker.enable = true;
 
-      # To rebuild the system after making changes:
-      # rebuild
+      # To rebuild the system after making changes, run:
+      #   sudo nixos-rebuild switch
+      # or use the convenience command:
+      #   rebuild
     }
   '';
 
   # Generate a basic hardware-configuration.nix for the VM
-  environment.etc."nixos/hardware-configuration.nix".text = ''
+  environment.etc."nixos-template/hardware-configuration.nix".text = ''
     # Hardware configuration for ${vmName} VM
     # Generated automatically - do not edit
 
@@ -329,7 +347,7 @@
   '';
 
   # Add a simple 'rebuild' command for easy VM rebuilds using flakes
-  environment.etc."nixos/rebuild".source = pkgs.writeShellScript "vm-rebuild" ''
+  environment.etc."nixos-template/rebuild".source = pkgs.writeShellScript "vm-rebuild" ''
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -389,28 +407,42 @@
     fi
   '';
 
-  # Make the rebuild command executable and accessible, and set up /etc/nixos for flakes
-  system.activationScripts.vm-rebuild-command = ''
-    chmod +x /etc/nixos/rebuild
-    ln -sf /etc/nixos/rebuild /run/current-system/sw/bin/rebuild
+  # Set up /etc/nixos as a writable directory with flake configuration
+  system.activationScripts.vm-nixos-setup = {
+    text = ''
+      # Create /etc/nixos as a real writable directory (not a symlink)
+      if [ ! -d /etc/nixos ] || [ -L /etc/nixos ]; then
+        rm -rf /etc/nixos
+        mkdir -p /etc/nixos
+      fi
 
-    # Make /etc/nixos writable for flake operations
-    chmod 755 /etc/nixos
-    chmod 644 /etc/nixos/flake.nix /etc/nixos/flake.lock /etc/nixos/configuration.nix /etc/nixos/hardware-configuration.nix
+      # Copy template files to /etc/nixos if they don't exist or are older
+      for file in flake.nix flake.lock configuration.nix hardware-configuration.nix rebuild README.md; do
+        if [ ! -f /etc/nixos/$file ] || [ /etc/nixos-template/$file -nt /etc/nixos/$file ]; then
+          cp -f /etc/nixos-template/$file /etc/nixos/$file
+          chmod 644 /etc/nixos/$file
+        fi
+      done
 
-    # Initialize git repo if it doesn't exist (required for flakes)
-    if [ ! -d /etc/nixos/.git ]; then
-      cd /etc/nixos
-      ${pkgs.git}/bin/git init --quiet
-      ${pkgs.git}/bin/git config user.name "VM User"
-      ${pkgs.git}/bin/git config user.email "user@vm.local"
-      ${pkgs.git}/bin/git add .
-      ${pkgs.git}/bin/git commit --quiet -m "Initial VM configuration"
-    fi
-  '';
+      # Make rebuild script executable
+      chmod +x /etc/nixos/rebuild
+      ln -sf /etc/nixos/rebuild /run/current-system/sw/bin/rebuild
+
+      # Initialize git repo if it doesn't exist (required for flakes)
+      if [ ! -d /etc/nixos/.git ]; then
+        cd /etc/nixos
+        ${pkgs.git}/bin/git init --quiet
+        ${pkgs.git}/bin/git config user.name "VM User"
+        ${pkgs.git}/bin/git config user.email "user@vm.local"
+        ${pkgs.git}/bin/git add .
+        ${pkgs.git}/bin/git commit --quiet -m "Initial VM configuration"
+      fi
+    '';
+    deps = [ ];
+  };
 
   # Add a helpful README
-  environment.etc."nixos/README.md".text = ''
+  environment.etc."nixos-template/README.md".text = ''
     # ${vmName} VM Configuration
 
     This directory contains the NixOS configuration for your VM.
@@ -418,12 +450,15 @@
     ## Quick Commands
 
     ```bash
-    # Easy flake-based rebuild (recommended)
+    # Standard NixOS rebuild (automatically uses flakes)
+    sudo nixos-rebuild switch
+
+    # Alternative: use the convenience command
     rebuild
 
-    # Alternative flake commands
-    sudo nixos-rebuild switch --flake /etc/nixos#${vmName}
-    sudo nixos-rebuild test --flake /etc/nixos#${vmName}
+    # Other rebuild operations
+    sudo nixos-rebuild test      # Test without making it boot default
+    sudo nixos-rebuild boot      # Set as boot default without switching
 
     # Flake utilities
     nix flake check /etc/nixos
@@ -442,13 +477,13 @@
     # Add packages (add to environment.systemPackages)
     environment.systemPackages = with pkgs; [ firefox git htop ];
 
-    # Rebuild with flakes using the simple command
+    # Rebuild the system (automatically uses flakes)
+    sudo nixos-rebuild switch
+
+    # Or use the convenience command
     rebuild
 
-    # Or use the full flake command
-    sudo nixos-rebuild switch --flake /etc/nixos#${vmName}
-
-    # Check flake for errors
+    # Check flake for errors before rebuilding
     nix flake check /etc/nixos
     ```
 

@@ -167,6 +167,7 @@
         # Tests
         checks = {
           integration-test = import ./tests/integration { inherit pkgs; };
+          nixos-rebuild-test = import ./tests/integration/nixos-rebuild-test.nix { inherit pkgs; };
           unit-test = import ./tests/unit.nix { inherit pkgs; };
         };
       }
