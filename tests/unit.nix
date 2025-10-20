@@ -35,6 +35,7 @@ pkgs.runCommand "vm-selector-unit-tests" {
   grep -q "\-\-share-ro PATH" ${vmSelectorScript} || (echo "✗ --share-ro option missing from help" && exit 1)
   grep -q "\-\-name NAME" ${vmSelectorScript} || (echo "✗ --name option missing from help" && exit 1)
   grep -q "\-\-overlay" ${vmSelectorScript} || (echo "✗ --overlay option missing from help" && exit 1)
+  grep -q "\-\-audio" ${vmSelectorScript} || (echo "✗ --audio option missing from help" && exit 1)
 
   echo "✓ All command line options documented in help"
 
@@ -55,6 +56,7 @@ pkgs.runCommand "vm-selector-unit-tests" {
   grep -q "\-n|\-\-name)" ${vmSelectorScript} || (echo "✗ Name argument parsing missing" && exit 1)
   grep -q "\-\-share-rw)" ${vmSelectorScript} || (echo "✗ Share-RW argument parsing missing" && exit 1)
   grep -q "\-\-share-ro)" ${vmSelectorScript} || (echo "✗ Share-RO argument parsing missing" && exit 1)
+  grep -q "\-a|\-\-audio)" ${vmSelectorScript} || (echo "✗ Audio argument parsing missing" && exit 1)
 
   echo "✓ All argument parsing cases are present"
 

@@ -40,7 +40,7 @@
 
         # Function to create VM with specific parameters
         makeVM =
-          ramStr: cpuStr: storageStr: useOverlay: sharedFoldersRW: sharedFoldersRO: vmName:
+          ramStr: cpuStr: storageStr: useOverlay: sharedFoldersRW: sharedFoldersRO: vmName: enableAudio:
           let
             memorySize = parseSize ramStr;
             cores = parseSize cpuStr;
@@ -81,6 +81,7 @@
                       sharedFoldersRW
                       sharedFoldersRO
                       vmName
+                      enableAudio
                       ;
                   }
                 )
@@ -110,15 +111,15 @@
       {
         # VM packages - only a default example
         packages = {
-          vm = makeVM "8gb" "2cpu" "50gb" false [ ] [ ] "ai-vm"; # Default example config
+          vm = makeVM "8gb" "2cpu" "50gb" false [ ] [ ] "ai-vm" false; # Default example config (no audio)
         };
 
         # Library functions for creating custom VMs
         lib = {
           makeCustomVM =
-            ram: cpu: storage: overlay: sharedRW: sharedRO: vmName:
+            ram: cpu: storage: overlay: sharedRW: sharedRO: vmName: enableAudio:
             makeVM "${toString ram}gb" "${toString cpu}cpu" "${toString storage}gb" overlay sharedRW sharedRO
-              vmName;
+              vmName enableAudio;
         };
 
         # Apps - just the vm-selector and default VM

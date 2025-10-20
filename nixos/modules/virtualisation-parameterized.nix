@@ -1,4 +1,4 @@
-{ config, pkgs, memorySize ? 8192, cores ? 2, diskSize ? 51200, useOverlay ? false, sharedFoldersRW ? [], sharedFoldersRO ? [], vmName ? "ai-vm", ... }:
+{ config, pkgs, memorySize ? 8192, cores ? 2, diskSize ? 51200, useOverlay ? false, sharedFoldersRW ? [], sharedFoldersRO ? [], vmName ? "ai-vm", enableAudio ? false, ... }:
 
 {
   # Set system hostname to VM name
@@ -25,6 +25,17 @@
       { from = "host"; host.port = 3001; guest.port = 3001; }
       { from = "host"; host.port = 9080; guest.port = 9080; }
     ];
+
+    # Audio configuration
+    virtualisation.qemu.options = if enableAudio then [
+      # PulseAudio passthrough with both input and output
+      "-audiodev"
+      "pa,id=pa1,in.name=${vmName}-input,out.name=${vmName}-output"
+      "-device"
+      "intel-hda"
+      "-device"
+      "hda-duplex,audiodev=pa1"
+    ] else [];
 
     # Shared folders configuration
     virtualisation.sharedDirectories =
@@ -55,4 +66,28 @@
       };
     }) sharedFoldersRO);
   };
+
+  # Audio system configuration (enabled when audio passthrough is requested)
+  services.pulseaudio = {
+    enable = enableAudio;
+    systemWide = false;
+    support32Bit = true;
+  };
+
+  # For better audio compatibility, we might want to add pipewire support as well
+  # services.pipewire = {
+  #   enable = enableAudio;
+  #   alsa.enable = true;
+  #   alsa.support32Bit = true;
+  #   pulse.enable = true;
+  # };
+
+  # Add audio group for users when audio is enabled
+  users.groups = pkgs.lib.mkIf enableAudio {
+    audio = {};
+  };
+
+  # Add users to audio group when audio is enabled
+  users.users.dennis.extraGroups = pkgs.lib.mkIf enableAudio [ "wheel" "networkmanager" "audio" ];
+  users.users.dvv.extraGroups = pkgs.lib.mkIf enableAudio [ "wheel" "networkmanager" "audio" ];
 }

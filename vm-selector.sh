@@ -30,6 +30,7 @@ Options:
   --share-rw PATH       Share host directory as read-write (mounted at /mnt/host-rw/PATH in VM)
   --share-ro PATH       Share host directory as read-only (mounted at /mnt/host-ro/PATH in VM)
   -n, --name NAME       Custom VM name (affects qcow2 file and script names, default: ai-vm)
+  -a, --audio           Enable audio passthrough (microphone input + audio output)
   -h, --help           Show this help
 
 Examples:
@@ -40,6 +41,7 @@ Examples:
   $0 --ram 8 --cpu 4 --storage 100 --share-rw /home/user/projects  # With shared folder
   $0 --share-ro /etc --share-rw /tmp --ram 16 --cpu 8 --storage 200  # Multiple shares
   $0 --name "dev-env" --ram 16 --cpu 8 --storage 200  # Named VM (creates dev-env.qcow2, start-dev-env.sh)
+  $0 --ram 16 --cpu 8 --storage 200 --audio  # VM with audio passthrough enabled
 
 Default options available in fzf menu, but you can type any custom value
 EOF
@@ -54,6 +56,7 @@ USE_OVERLAY="false"
 SHARED_RW=()
 SHARED_RO=()
 VM_NAME="ai-vm"
+ENABLE_AUDIO="false"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -103,6 +106,10 @@ while [[ $# -gt 0 ]]; do
             VM_NAME="$2"
             INTERACTIVE=false
             shift 2
+            ;;
+        -a|--audio)
+            ENABLE_AUDIO="true"
+            shift
             ;;
         -h|--help)
             show_help
@@ -276,6 +283,20 @@ if [[ "$INTERACTIVE" == "true" ]]; then
             break
         done
     fi
+
+    # Ask about audio passthrough
+    audio_options=("No audio passthrough" "Enable audio passthrough (microphone + speakers)")
+    audio_choice=$(printf "%s\n" "${audio_options[@]}" | fzf --prompt="Audio: " --height=20%)
+    if [[ -z "$audio_choice" ]]; then
+        echo "Cancelled."
+        exit 0
+    fi
+
+    if [[ "$audio_choice" == *"Enable audio"* ]]; then
+        ENABLE_AUDIO="true"
+    else
+        ENABLE_AUDIO="false"
+    fi
 else
     # Direct mode - validate all required parameters
     if [[ -z "$SELECTED_RAM" || -z "$SELECTED_CPU" || -z "$SELECTED_STORAGE" ]]; then
@@ -309,6 +330,13 @@ else
     overlay_status="disabled"
 fi
 
+# Set audio status for display
+if [[ "$ENABLE_AUDIO" == "true" ]]; then
+    audio_status="enabled"
+else
+    audio_status="disabled"
+fi
+
 # Generate shared folders summary
 shared_summary=""
 if [[ ${#SHARED_RW[@]} -gt 0 ]]; then
@@ -319,7 +347,7 @@ if [[ ${#SHARED_RO[@]} -gt 0 ]]; then
 fi
 
 # Run selected VM
-echo "Starting VM: ${selected_ram}GB RAM, ${selected_cpu} CPU cores, ${selected_storage}GB storage with overlay: $overlay_status$shared_summary"
+echo "Starting VM: ${selected_ram}GB RAM, ${selected_cpu} CPU cores, ${selected_storage}GB storage, overlay: $overlay_status, audio: $audio_status$shared_summary"
 
 # Always build custom VM on-demand
 echo "Building VM configuration..."
@@ -348,7 +376,7 @@ nix build --impure --expr "
       flake = builtins.getFlake \"git+file://$(pwd)\";
       pkgs = flake.inputs.nixpkgs.legacyPackages.\${builtins.currentSystem};
     in
-      flake.lib.\${builtins.currentSystem}.makeCustomVM $selected_ram $selected_cpu $selected_storage $overlay_flag $rw_list $ro_list \"$VM_NAME\"
+      flake.lib.\${builtins.currentSystem}.makeCustomVM $selected_ram $selected_cpu $selected_storage $overlay_flag $rw_list $ro_list \"$VM_NAME\" $ENABLE_AUDIO
 "
 
 # Create reusable bash script
@@ -360,7 +388,7 @@ cat > "start-${VM_NAME}.sh" << EOF
 
 # Generated VM startup script for: $VM_NAME
 # Configuration: ${selected_ram}GB RAM, ${selected_cpu} CPU cores, ${selected_storage}GB storage
-# Overlay: $overlay_status$shared_summary
+# Overlay: $overlay_status, Audio: $audio_status$shared_summary
 # Generated on: $(date)
 
 set -euo pipefail
@@ -381,10 +409,12 @@ RAM_SIZE=$selected_ram
 CPU_CORES=$selected_cpu
 STORAGE_SIZE=$selected_storage
 OVERLAY=$overlay_flag
+AUDIO=$ENABLE_AUDIO
 
 echo "Starting VM: \$VM_NAME"
 echo "Configuration: \${RAM_SIZE}GB RAM, \${CPU_CORES} CPU cores, \${STORAGE_SIZE}GB storage"
 echo "Overlay filesystem: $overlay_status"
+echo "Audio passthrough: $audio_status"
 EOF
 
     # Add shared folder information to script
