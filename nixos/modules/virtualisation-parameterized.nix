@@ -129,153 +129,25 @@
 
       outputs = { self, nixpkgs }:
       let
-        vmSystem = "x86_64-linux";
-        pkgs = nixpkgs.legacyPackages.$${vmSystem};
+        system = "x86_64-linux";
+        pkgs = nixpkgs.legacyPackages.$${system};
       in
       {
         nixosConfigurations.${vmName} = nixpkgs.lib.nixosSystem {
-          system = vmSystem;
+          inherit system;
           modules = [
+            ./hardware-configuration.nix
             ./configuration.nix
-            {
-              # VM-specific configuration
-              networking.hostName = "${vmName}";
-
-              # Virtualisation settings (current configuration)
-              virtualisation.vmVariant = {
-                virtualisation.memorySize = ${toString memorySize};
-                virtualisation.cores = ${toString cores};
-                virtualisation.diskSize = ${toString diskSize};
-                virtualisation.graphics = false;
-                virtualisation.writableStore = ${if useOverlay then "true" else "false"};
-                virtualisation.diskImage = "./${vmName}.qcow2";
-
-                virtualisation.forwardPorts = [
-                  { from = "host"; host.port = 2222; guest.port = 22; }
-                  { from = "host"; host.port = 3001; guest.port = 3001; }
-                  { from = "host"; host.port = 9080; guest.port = 9080; }
-                ];
-
-                ${if enableAudio then ''
-                virtualisation.qemu.options = [
-                  "-audiodev"
-                  "pa,id=pa1,in.name=${vmName}-input,out.name=${vmName}-output"
-                  "-device"
-                  "intel-hda"
-                  "-device"
-                  "hda-duplex,audiodev=pa1"
-                ];
-                '' else ''
-                virtualisation.qemu.options = [];
-                ''}
-              };
-
-              # System configuration
-              boot.loader.grub.enable = true;
-              boot.loader.grub.device = "/dev/vda";
-
-              nix.settings.experimental-features = [ "nix-command" "flakes" ];
-              system.stateVersion = "23.11";
-
-              # Audio configuration
-              ${if enableAudio then ''
-              services.pulseaudio = {
-                enable = true;
-                systemWide = false;
-                support32Bit = true;
-              };
-
-              users.groups.audio = {};
-              '' else ""}
-
-              # User configuration
-              users.users.dennis = {
-                isNormalUser = true;
-                extraGroups = [ "wheel" "networkmanager" ${if enableAudio then "\"audio\"" else ""} ];
-                hashedPassword = "";
-                shell = pkgs.fish;
-                openssh.authorizedKeys.keys = [ ];
-              };
-
-              users.users.dvv = {
-                isNormalUser = true;
-                extraGroups = [ "wheel" "networkmanager" ${if enableAudio then "\"audio\"" else ""} ];
-                hashedPassword = "";
-                shell = pkgs.fish;
-                openssh.authorizedKeys.keys = [ ];
-              };
-
-              security.sudo.wheelNeedsPassword = false;
-              services.getty.autologinUser = "dennis";
-
-              programs.fish = {
-                enable = true;
-                interactiveShellInit = '''
-                  fish_add_path --prepend /run/wrappers/bin
-                  fish_add_path --append /run/current-system/sw/bin
-                ''';
-              };
-
-              # Networking
-              networking.useDHCP = false;
-              networking.interfaces.eth0.useDHCP = true;
-              networking.firewall.enable = false;
-
-              # Services
-              services.openssh = {
-                enable = true;
-                settings = {
-                  PasswordAuthentication = true;
-                  PermitRootLogin = "no";
-                };
-              };
-
-              services.qemuGuest.enable = true;
-
-              # Packages
-              nixpkgs.config.allowUnfree = true;
-              nixpkgs.config.allowUnfreePredicate = pkg:
-                builtins.elem (pkgs.lib.getName pkg) [ "claude-code" ];
-
-              environment.systemPackages = with pkgs; [
-                # Development tools
-                git
-                curl
-                wget
-                vim
-                nano
-                htop
-                tree
-                unzip
-                file
-                jq
-
-                # Build tools
-                gcc
-                gnumake
-                pkg-config
-
-                # Claude Code
-                claude-code
-
-                # Additional development packages
-                nodejs_22
-                python3
-                rustc
-                cargo
-                go
-              ];
-            }
           ];
         };
       };
     }
   '';
 
-  # Install a basic configuration.nix that imports hardware-configuration.nix
+  # Install a complete configuration.nix for the VM
   environment.etc."nixos/configuration.nix".text = ''
     # ${vmName} VM Configuration
-    # Edit this file to customize your VM, then run: sudo nixos-rebuild switch
+    # Edit this file to customize your VM, then run: switch
 
     { config, pkgs, ... }:
 
@@ -292,6 +164,105 @@
       # Audio: ${if enableAudio then "enabled" else "disabled"}
       # Overlay: ${if useOverlay then "enabled" else "disabled"}
 
+      # System configuration
+      boot.loader.grub.enable = true;
+      boot.loader.grub.device = "/dev/vda";
+
+      # Enable flakes
+      nix.settings.experimental-features = [ "nix-command" "flakes" ];
+      system.stateVersion = "23.11";
+
+      # Networking
+      networking.useDHCP = false;
+      networking.interfaces.eth0.useDHCP = true;
+      networking.firewall.enable = false;
+
+      # User configuration
+      users.users.dennis = {
+        isNormalUser = true;
+        extraGroups = [ "wheel" "networkmanager"${if enableAudio then " \"audio\"" else ""} ];
+        hashedPassword = "";
+        shell = pkgs.fish;
+        openssh.authorizedKeys.keys = [ ];
+      };
+
+      users.users.dvv = {
+        isNormalUser = true;
+        extraGroups = [ "wheel" "networkmanager"${if enableAudio then " \"audio\"" else ""} ];
+        hashedPassword = "";
+        shell = pkgs.fish;
+        openssh.authorizedKeys.keys = [ ];
+      };
+
+      security.sudo.wheelNeedsPassword = false;
+      services.getty.autologinUser = "dennis";
+
+      programs.fish = {
+        enable = true;
+        interactiveShellInit = '''
+          fish_add_path --prepend /run/wrappers/bin
+          fish_add_path --append /run/current-system/sw/bin
+        ''';
+      };
+
+      # Services
+      services.openssh = {
+        enable = true;
+        settings = {
+          PasswordAuthentication = true;
+          PermitRootLogin = "no";
+        };
+      };
+
+      services.qemuGuest.enable = true;
+
+      ${if enableAudio then ''
+      # Audio configuration
+      services.pulseaudio = {
+        enable = true;
+        systemWide = false;
+        support32Bit = true;
+      };
+
+      users.groups.audio = {};
+      '' else ""}
+
+      # Packages
+      nixpkgs.config.allowUnfree = true;
+      nixpkgs.config.allowUnfreePredicate = pkg:
+        builtins.elem (pkgs.lib.getName pkg) [ "claude-code" ];
+
+      environment.systemPackages = with pkgs; [
+        # Development tools
+        git
+        curl
+        wget
+        vim
+        nano
+        htop
+        tree
+        unzip
+        file
+        jq
+
+        # Build tools
+        gcc
+        gnumake
+        pkg-config
+
+        # Claude Code
+        claude-code
+
+        # Additional development packages
+        nodejs_22
+        python3
+        rustc
+        cargo
+        go
+
+        # Add your packages here
+      ];
+
       # Add your custom configuration here
       # Examples:
       # environment.systemPackages = with pkgs; [ firefox ];
@@ -300,9 +271,6 @@
 
       # To rebuild the system after making changes:
       # switch
-      #
-      # Or use the full command:
-      # sudo nixos-rebuild switch -I nixos-config=/etc/nixos/configuration.nix
     }
   '';
 
@@ -333,29 +301,56 @@
     }
   '';
 
-  # Add a simple 'switch' command for easy VM rebuilds
+  # Add a simple 'switch' command for easy VM rebuilds using flakes
   environment.etc."nixos/switch".source = pkgs.writeShellScript "vm-switch" ''
     #!/usr/bin/env bash
     set -euo pipefail
 
-    # Simple VM rebuild command
-    echo "🔄 Rebuilding ${vmName} VM configuration..."
+    # Simple VM rebuild command using flakes
+    echo "🔄 Rebuilding ${vmName} VM configuration with flakes..."
     echo ""
 
-    # Check if configuration file exists
+    # Check if configuration files exist
+    if [[ ! -f /etc/nixos/flake.nix ]]; then
+        echo "❌ Error: /etc/nixos/flake.nix not found"
+        exit 1
+    fi
+
     if [[ ! -f /etc/nixos/configuration.nix ]]; then
         echo "❌ Error: /etc/nixos/configuration.nix not found"
         exit 1
     fi
 
-    # Run the rebuild
-    if sudo nixos-rebuild switch -I nixos-config=/etc/nixos/configuration.nix "$@"; then
+    # Change to /etc/nixos directory (important for flakes)
+    cd /etc/nixos
+
+    # Initialize git repo if it doesn't exist (flakes need git)
+    if [[ ! -d .git ]]; then
+        echo "📝 Initializing git repository for flake..."
+        git init --quiet
+        git add .
+        git commit --quiet -m "Initial VM configuration"
+    else
+        # Add any new changes
+        git add .
+        if ! git diff --cached --quiet; then
+            git commit --quiet -m "Update VM configuration $(date)"
+        fi
+    fi
+
+    # Run the rebuild with flakes
+    if sudo nixos-rebuild switch --flake .#${vmName} "$@"; then
         echo ""
-        echo "✅ VM configuration rebuilt successfully!"
+        echo "✅ VM configuration rebuilt successfully with flakes!"
         echo "   Changes are now active."
     else
         echo ""
         echo "❌ Rebuild failed. Check the error messages above."
+        echo ""
+        echo "💡 Troubleshooting tips:"
+        echo "   - Check your configuration.nix for syntax errors"
+        echo "   - Run 'nix flake check' to validate the flake"
+        echo "   - Try 'sudo nixos-rebuild switch --flake .#${vmName} --show-trace' for more details"
         exit 1
     fi
   '';
@@ -375,18 +370,19 @@
     ## Quick Commands
 
     ```bash
-    # Easy rebuild command (recommended)
+    # Easy flake-based rebuild (recommended)
     switch
 
-    # Alternative rebuild methods
-    sudo nixos-rebuild switch -I nixos-config=/etc/nixos/configuration.nix
-    sudo nixos-rebuild test -I nixos-config=/etc/nixos/configuration.nix
+    # Alternative flake commands
+    sudo nixos-rebuild switch --flake /etc/nixos#${vmName}
+    sudo nixos-rebuild test --flake /etc/nixos#${vmName}
 
-    # Show current configuration
-    sudo nix-instantiate --eval -E "with import <nixpkgs/nixos> {}; config.system.nixos.release"
+    # Flake utilities
+    nix flake check /etc/nixos
+    nix flake update /etc/nixos
 
     # Install packages temporarily
-    nix-shell -p package-name
+    nix shell nixpkgs#package-name
     ```
 
     ## Usage Examples
@@ -398,12 +394,22 @@
     # Add packages (add to environment.systemPackages)
     environment.systemPackages = with pkgs; [ firefox git htop ];
 
-    # Rebuild with the simple command
+    # Rebuild with flakes using the simple command
     switch
 
-    # Or test changes without switching
-    sudo nixos-rebuild test -I nixos-config=/etc/nixos/configuration.nix
+    # Or use the full flake command
+    sudo nixos-rebuild switch --flake /etc/nixos#${vmName}
+
+    # Check flake for errors
+    nix flake check /etc/nixos
     ```
+
+    ## Flake Benefits
+
+    - **Reproducible**: Exact dependency versions locked in flake.lock
+    - **Modern**: Uses the latest Nix flakes technology
+    - **Isolated**: Dependencies are tracked and version-controlled
+    - **Future-proof**: Flakes are the future of Nix configuration
 
     ## Configuration Files
 
