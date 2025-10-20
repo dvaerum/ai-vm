@@ -2,6 +2,28 @@
 
 set -euo pipefail
 
+# Get the directory where this script is located
+# If running from Nix store (via nix run), use current working directory instead
+if [[ "${BASH_SOURCE[0]}" == /nix/store/* ]]; then
+    SCRIPT_DIR="$(pwd)"
+    echo "Note: Running from Nix store, using current directory: $SCRIPT_DIR"
+
+    # Check if current directory has a flake.nix (basic validation)
+    if [[ ! -f "$SCRIPT_DIR/flake.nix" ]]; then
+        echo "Error: When using 'nix run', you must run from the AI VM project directory."
+        echo "The current directory ($SCRIPT_DIR) does not contain a flake.nix file."
+        echo ""
+        echo "Solution: cd to the AI VM project directory, then run:"
+        echo "  nix run . -- [your arguments]"
+        echo ""
+        echo "Or use the script directly from the project directory:"
+        echo "  ./vm-selector.sh [your arguments]"
+        exit 1
+    fi
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+
 # Default options (for fzf menu)
 RAM_OPTIONS=("2" "4" "8" "16" "32")
 CPU_OPTIONS=("1" "2" "4" "8")
@@ -23,25 +45,43 @@ Usage:
   $0 --ram RAM --cpu CPU --storage STORAGE [--overlay]  # Direct mode
 
 Options:
+  # Hardware Configuration
   -r, --ram RAM         RAM size in GB (any positive integer, defaults: 2, 4, 8, 16, 32)
   -c, --cpu CPU         CPU cores (any positive integer, defaults: 1, 2, 4, 8)
   -s, --storage STORAGE Storage size in GB (any positive integer, defaults: 20, 50, 100, 200)
+
+  # VM Identity
+  -n, --name NAME       Custom VM name (affects qcow2 file and script names, default: ai-vm)
+
+  # Features & Capabilities
+  -a, --audio           Enable audio passthrough (microphone input + audio output)
   -o, --overlay         Enable overlay filesystem (clean state each boot)
+
+  # Host Integration
   --share-rw PATH       Share host directory as read-write (mounted at /mnt/host-rw/PATH in VM)
   --share-ro PATH       Share host directory as read-only (mounted at /mnt/host-ro/PATH in VM)
-  -n, --name NAME       Custom VM name (affects qcow2 file and script names, default: ai-vm)
-  -a, --audio           Enable audio passthrough (microphone input + audio output)
+
+  # Help
   -h, --help           Show this help
 
 Examples:
+  # Basic Usage
   $0                                    # Interactive mode with default options
-  $0 --ram 8 --cpu 4 --storage 100     # Standard configuration
-  $0 -r 24 -c 6 -s 75 --overlay        # Custom configuration with overlay
-  $0 -r 128 -c 16 -s 500               # High-end custom configuration
+  $0 --ram 8 --cpu 4 --storage 100     # Basic custom configuration
+
+  # Named VMs
+  $0 --name "dev-env" --ram 16 --cpu 8 --storage 200  # Named VM (creates dev-env.qcow2, start-dev-env.sh)
+
+  # With Features
+  $0 --ram 16 --cpu 8 --storage 200 --audio  # VM with audio passthrough
+  $0 -r 24 -c 6 -s 75 --overlay        # Custom configuration with overlay filesystem
+
+  # Host Integration
   $0 --ram 8 --cpu 4 --storage 100 --share-rw /home/user/projects  # With shared folder
   $0 --share-ro /etc --share-rw /tmp --ram 16 --cpu 8 --storage 200  # Multiple shares
-  $0 --name "dev-env" --ram 16 --cpu 8 --storage 200  # Named VM (creates dev-env.qcow2, start-dev-env.sh)
-  $0 --ram 16 --cpu 8 --storage 200 --audio  # VM with audio passthrough enabled
+
+  # High-End Configuration
+  $0 -r 128 -c 16 -s 500               # High-performance VM
 
 Default options available in fzf menu, but you can type any custom value
 EOF
@@ -206,6 +246,44 @@ if [[ "$INTERACTIVE" == "true" ]]; then
         exit 1
     fi
 
+    # Ask for VM name
+    name_options=("Use default name (ai-vm)" "Specify custom name")
+    name_choice=$(printf "%s\n" "${name_options[@]}" | fzf --prompt="VM name: " --height=20%)
+    if [[ -z "$name_choice" ]]; then
+        echo "Cancelled."
+        exit 0
+    fi
+
+    if [[ "$name_choice" == "Specify custom name" ]]; then
+        while true; do
+            read -p "Enter VM name (letters, numbers, hyphens, underscores only): " custom_name
+            if [[ -z "$custom_name" ]]; then
+                echo "VM name cannot be empty."
+                continue
+            fi
+            if [[ ! "$custom_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+                echo "Error: VM name must contain only letters, numbers, hyphens, and underscores"
+                continue
+            fi
+            VM_NAME="$custom_name"
+            break
+        done
+    fi
+
+    # Ask about audio passthrough
+    audio_options=("No audio passthrough" "Enable audio passthrough (microphone + speakers)")
+    audio_choice=$(printf "%s\n" "${audio_options[@]}" | fzf --prompt="Audio: " --height=20%)
+    if [[ -z "$audio_choice" ]]; then
+        echo "Cancelled."
+        exit 0
+    fi
+
+    if [[ "$audio_choice" == *"Enable audio"* ]]; then
+        ENABLE_AUDIO="true"
+    else
+        ENABLE_AUDIO="false"
+    fi
+
     # Show overlay filesystem menu
     overlay_options=("No overlay (faster startup, changes persist)" "With overlay (slower startup, clean state each boot)")
     selected_overlay=$(printf "%s\n" "${overlay_options[@]}" | fzf --prompt="Nix store overlay: " --height=20%)
@@ -258,44 +336,6 @@ if [[ "$INTERACTIVE" == "true" ]]; then
             SHARED_RO+=("$(realpath "$ro_path")")
             echo "Added: $ro_path (read-only)"
         done
-    fi
-
-    # Ask for VM name
-    name_options=("Use default name (ai-vm)" "Specify custom name")
-    name_choice=$(printf "%s\n" "${name_options[@]}" | fzf --prompt="VM name: " --height=20%)
-    if [[ -z "$name_choice" ]]; then
-        echo "Cancelled."
-        exit 0
-    fi
-
-    if [[ "$name_choice" == "Specify custom name" ]]; then
-        while true; do
-            read -p "Enter VM name (letters, numbers, hyphens, underscores only): " custom_name
-            if [[ -z "$custom_name" ]]; then
-                echo "VM name cannot be empty."
-                continue
-            fi
-            if [[ ! "$custom_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-                echo "Error: VM name must contain only letters, numbers, hyphens, and underscores"
-                continue
-            fi
-            VM_NAME="$custom_name"
-            break
-        done
-    fi
-
-    # Ask about audio passthrough
-    audio_options=("No audio passthrough" "Enable audio passthrough (microphone + speakers)")
-    audio_choice=$(printf "%s\n" "${audio_options[@]}" | fzf --prompt="Audio: " --height=20%)
-    if [[ -z "$audio_choice" ]]; then
-        echo "Cancelled."
-        exit 0
-    fi
-
-    if [[ "$audio_choice" == *"Enable audio"* ]]; then
-        ENABLE_AUDIO="true"
-    else
-        ENABLE_AUDIO="false"
     fi
 else
     # Direct mode - validate all required parameters
@@ -373,7 +413,7 @@ ro_list+="]"
 # Build and run custom VM using nix build
 nix build --impure --expr "
     let
-      flake = builtins.getFlake \"git+file://$(pwd)\";
+      flake = builtins.getFlake \"git+file://$SCRIPT_DIR\";
       pkgs = flake.inputs.nixpkgs.legacyPackages.\${builtins.currentSystem};
     in
       flake.lib.\${builtins.currentSystem}.makeCustomVM $selected_ram $selected_cpu $selected_storage $overlay_flag $rw_list $ro_list \"$VM_NAME\" $ENABLE_AUDIO
@@ -395,6 +435,8 @@ set -euo pipefail
 
 SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 cd "\$SCRIPT_DIR"
+
+# Note: The VM was built from: $SCRIPT_DIR
 
 # Check if VM files exist
 if [[ ! -f "${VM_NAME}.qcow2" ]]; then
@@ -441,7 +483,7 @@ echo "Press Ctrl+C to stop the VM"
 echo ""
 
 # Start the VM
-exec "./result/bin/run-${VM_NAME}-vm"
+exec "$SCRIPT_DIR/result/bin/run-${VM_NAME}-vm"
 EOF
 
 chmod +x "start-${VM_NAME}.sh"
@@ -453,4 +495,4 @@ echo ""
 echo "To restart this VM later, run: ./start-${VM_NAME}.sh"
 echo ""
 echo "Starting VM now..."
-exec "./result/bin/run-${VM_NAME}-vm"
+exec "$SCRIPT_DIR/result/bin/run-${VM_NAME}-vm"

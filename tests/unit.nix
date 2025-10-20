@@ -99,6 +99,22 @@ pkgs.runCommand "vm-selector-unit-tests" {
 
   echo "✓ fzf 12 cores scenario test passed"
 
+  # Test /etc/nixos configuration generation (basic validation)
+  echo "=== Testing /etc/nixos configuration generation ==="
+
+  # Check that the virtualisation module contains /etc/nixos configuration patterns
+  vmModule=../nixos/modules/virtualisation-parameterized.nix
+  if [[ -f "$vmModule" ]]; then
+    grep -q "environment.etc.\"nixos/flake.nix\"" "$vmModule" || (echo "✗ flake.nix generation missing" && exit 1)
+    grep -q "environment.etc.\"nixos/configuration.nix\"" "$vmModule" || (echo "✗ configuration.nix generation missing" && exit 1)
+    grep -q "environment.etc.\"nixos/hardware-configuration.nix\"" "$vmModule" || (echo "✗ hardware-configuration.nix generation missing" && exit 1)
+    grep -q "environment.etc.\"nixos/README.md\"" "$vmModule" || (echo "✗ README.md generation missing" && exit 1)
+    grep -q "Quick Commands" "$vmModule" || (echo "✗ README content missing" && exit 1)
+    echo "✓ /etc/nixos configuration generation tests passed"
+  else
+    echo "⚠️ Virtualisation module not found at expected path (test environment limitation)"
+  fi
+
   # Success marker
   touch $out
   echo "=== All unit tests passed! ==="
