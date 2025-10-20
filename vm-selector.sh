@@ -162,7 +162,9 @@ if [[ "$INTERACTIVE" == "true" ]]; then
     fi
 
     # Select RAM (allow custom input)
-    selected_ram=$(printf "%s\n" "${RAM_OPTIONS[@]}" | fzf --prompt="Select or type RAM (GB): " --print-query --height=20% | tail -1)
+    fzf_output=$(printf "%s\n" "${RAM_OPTIONS[@]}" | fzf --prompt="Select or type RAM (GB): " --print-query --height=20%)
+    selected_ram=$(echo "$fzf_output" | tail -1)
+    [[ -z "$selected_ram" ]] && selected_ram=$(echo "$fzf_output" | head -1)
     if [[ -z "$selected_ram" ]]; then
         echo "Cancelled."
         exit 0
@@ -172,7 +174,9 @@ if [[ "$INTERACTIVE" == "true" ]]; then
     fi
 
     # Select CPU cores (allow custom input)
-    selected_cpu=$(printf "%s\n" "${CPU_OPTIONS[@]}" | fzf --prompt="Select or type CPU cores: " --print-query --height=20% | tail -1)
+    fzf_output=$(printf "%s\n" "${CPU_OPTIONS[@]}" | fzf --prompt="Select or type CPU cores: " --print-query --height=20%)
+    selected_cpu=$(echo "$fzf_output" | tail -1)
+    [[ -z "$selected_cpu" ]] && selected_cpu=$(echo "$fzf_output" | head -1)
     if [[ -z "$selected_cpu" ]]; then
         echo "Cancelled."
         exit 0
@@ -182,7 +186,9 @@ if [[ "$INTERACTIVE" == "true" ]]; then
     fi
 
     # Select storage (allow custom input)
-    selected_storage=$(printf "%s\n" "${STORAGE_OPTIONS[@]}" | fzf --prompt="Select or type storage (GB): " --print-query --height=20% | tail -1)
+    fzf_output=$(printf "%s\n" "${STORAGE_OPTIONS[@]}" | fzf --prompt="Select or type storage (GB): " --print-query --height=20%)
+    selected_storage=$(echo "$fzf_output" | tail -1)
+    [[ -z "$selected_storage" ]] && selected_storage=$(echo "$fzf_output" | head -1)
     if [[ -z "$selected_storage" ]]; then
         echo "Cancelled."
         exit 0
