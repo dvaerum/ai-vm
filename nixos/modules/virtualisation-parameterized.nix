@@ -39,9 +39,23 @@
 
     # Shared folders configuration
     virtualisation.sharedDirectories =
+      let
+        # Generate short mount tag from path (max 31 chars for QEMU)
+        mkMountTag = prefix: path:
+          let
+            # Get basename and hash for uniqueness
+            basename = builtins.baseNameOf path;
+            pathHash = builtins.substring 0 8 (builtins.hashString "sha256" path);
+            # Limit total length: prefix(3) + hash(8) + dash(1) + basename(max 19) = 31
+            maxBasename = 19;
+            shortBasename = if builtins.stringLength basename > maxBasename
+                           then builtins.substring 0 maxBasename basename
+                           else basename;
+          in "${prefix}${pathHash}-${shortBasename}";
+      in
       # Read-write shared folders
       (builtins.listToAttrs (builtins.map (path: {
-        name = "rw-${builtins.replaceStrings ["/"] ["-"] (builtins.substring 1 (builtins.stringLength path - 1) path)}";
+        name = mkMountTag "rw" path;
         value = {
           source = path;
           target = "/mnt/host-rw${path}";
@@ -49,7 +63,7 @@
       }) sharedFoldersRW)) //
       # Read-only shared folders (note: readonly is enforced via mount options, not via QEMU)
       (builtins.listToAttrs (builtins.map (path: {
-        name = "ro-${builtins.replaceStrings ["/"] ["-"] (builtins.substring 1 (builtins.stringLength path - 1) path)}";
+        name = mkMountTag "ro" path;
         value = {
           source = path;
           target = "/mnt/host-ro${path}";
@@ -57,14 +71,27 @@
       }) sharedFoldersRO));
 
     # Mount shared folders as read-only where needed
-    fileSystems = builtins.listToAttrs (builtins.map (path: {
-      name = "/mnt/host-ro${path}";
-      value = {
-        device = "ro-${builtins.replaceStrings ["/"] ["-"] (builtins.substring 1 (builtins.stringLength path - 1) path)}";
-        fsType = "9p";
-        options = ["trans=virtio" "version=9p2000.L" "ro"];
-      };
-    }) sharedFoldersRO);
+    fileSystems =
+      let
+        # Use same mount tag generation as above
+        mkMountTag = prefix: path:
+          let
+            basename = builtins.baseNameOf path;
+            pathHash = builtins.substring 0 8 (builtins.hashString "sha256" path);
+            maxBasename = 19;
+            shortBasename = if builtins.stringLength basename > maxBasename
+                           then builtins.substring 0 maxBasename basename
+                           else basename;
+          in "${prefix}${pathHash}-${shortBasename}";
+      in
+      builtins.listToAttrs (builtins.map (path: {
+        name = "/mnt/host-ro${path}";
+        value = {
+          device = mkMountTag "ro" path;
+          fsType = "9p";
+          options = ["trans=virtio" "version=9p2000.L" "ro"];
+        };
+      }) sharedFoldersRO);
   };
 
   # Audio system configuration (enabled when audio passthrough is requested)
