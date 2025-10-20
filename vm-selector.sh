@@ -15,18 +15,27 @@ if [[ "${BASH_SOURCE[0]}" == /nix/store/* ]]; then
     if ps -p $PPID -o args= 2>/dev/null | grep -q "path:"; then
         # Extract the path from the parent command
         PARENT_CMD=$(ps -p $PPID -o args= 2>/dev/null || echo "")
+        echo "Debug: Parent command: $PARENT_CMD"
         if [[ "$PARENT_CMD" =~ path:([^[:space:]]+) ]]; then
             EXTRACTED_PATH="${BASH_REMATCH[1]}"
+            echo "Debug: Extracted path: $EXTRACTED_PATH"
             # Convert relative path to absolute
             if [[ "$EXTRACTED_PATH" != /* ]]; then
                 EXTRACTED_PATH="$CURRENT_DIR/$EXTRACTED_PATH"
             fi
+            echo "Debug: Absolute path: $EXTRACTED_PATH"
             if [[ -f "$EXTRACTED_PATH/flake.nix" ]]; then
                 FLAKE_REF="git+file://$EXTRACTED_PATH"
                 SCRIPT_DIR="$EXTRACTED_PATH"
                 echo "Detected path reference: $EXTRACTED_PATH"
+            else
+                echo "Debug: No flake.nix found at $EXTRACTED_PATH"
             fi
+        else
+            echo "Debug: Could not extract path from command"
         fi
+    else
+        echo "Debug: No 'path:' found in parent process"
     fi
 
     # Method 2: Try to extract flake reference from Nix environment
@@ -42,6 +51,22 @@ if [[ "${BASH_SOURCE[0]}" == /nix/store/* ]]; then
         FLAKE_REF="git+file://$CURRENT_DIR"
         SCRIPT_DIR="$CURRENT_DIR"
         echo "Using local flake in current directory: $CURRENT_DIR"
+    fi
+
+    # Method 3.5: Smart detection for Projects/nixos-configs/ai-vm pattern
+    if [[ -z "$FLAKE_REF" ]]; then
+        # Check common project locations relative to current directory
+        for possible_path in \
+            "$CURRENT_DIR/Projects/nixos-configs/ai-vm" \
+            "$CURRENT_DIR/../nixos-configs/ai-vm" \
+            "$CURRENT_DIR/nixos-configs/ai-vm"; do
+            if [[ -f "$possible_path/flake.nix" ]]; then
+                FLAKE_REF="git+file://$possible_path"
+                SCRIPT_DIR="$possible_path"
+                echo "Detected ai-vm project at: $possible_path"
+                break
+            fi
+        done
     fi
 
     # Method 4: Default to github reference as fallback
