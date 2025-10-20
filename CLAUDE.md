@@ -16,10 +16,12 @@ This is a NixOS-based VM builder for running Claude Code and AI development envi
    - Library function `makeCustomVM` (lines 119-122): Public API for creating custom VMs
 
 2. **vm-selector.sh**: Interactive VM launcher with fzf menus or CLI arguments
-   - Detects execution context (Nix store vs direct) to determine flake reference
+   - Detects execution context (Nix store vs direct) to determine flake reference (lines 6-81)
    - Supports custom RAM/CPU/storage values beyond defaults
-   - Generates reusable startup scripts (start-{VM_NAME}.sh)
-   - Creates VMs in `~/.local/share/ai-vms` for remote flakes, project directory for local
+   - Generates reusable startup scripts (start-{VM_NAME}.sh) with embedded configuration (lines 492-560)
+   - VM storage location:
+     - Remote flakes (github:*): `~/.local/share/ai-vms/`
+     - Local flakes: project directory
 
 3. **NixOS Module Structure** (nixos/modules/):
    - `virtualisation-parameterized.nix`: Core VM configuration with parameters
@@ -37,7 +39,11 @@ This is a NixOS-based VM builder for running Claude Code and AI development envi
 - `hardware-configuration.nix`: Auto-generated hardware settings
 - `rebuild` command: Wrapper for `nixos-rebuild switch --flake .#vmname`
 
-**Shared Folders**: Uses 9p/virtio with mount tag generation (max 31 chars) combining path hash and basename. Read-only folders enforced via mount options.
+**Shared Folders**: Uses 9p/virtio filesystem sharing between host and guest:
+- Mount tag generation (max 31 chars): combines prefix + path hash (8 chars) + basename (max 19 chars)
+- Read-write shares: mounted at `/mnt/host-rw/{basename}`
+- Read-only shares: mounted at `/mnt/host-ro/{basename}` with `ro` mount option
+- Configured via `--share-rw` and `--share-ro` flags in vm-selector.sh
 
 **Audio Passthrough**: PulseAudio passthrough when enabled via `--audio` flag, using QEMU's `-audiodev pa` with intel-hda emulation.
 
@@ -75,6 +81,10 @@ nix flake check
 nix build .#checks.x86_64-linux.integration-test      # VM selector integration tests
 nix build .#checks.x86_64-linux.nixos-rebuild-test    # nixos-rebuild functionality test
 nix build .#checks.x86_64-linux.unit-test              # Unit tests
+
+# Manual testing inside a running VM
+ssh -p 2222 dennis@localhost
+./tests/manual-nixos-rebuild-test.sh  # Copy to VM first, or access via shared folder
 ```
 
 ### VM Management
@@ -96,14 +106,21 @@ nix flake check /etc/nixos
 
 ## Important Implementation Details
 
+### Dynamic VM Building
+VMs are built on-demand using `nix build --impure --expr` (vm-selector.sh:484-490):
+- Fetches flake using `builtins.getFlake` with detected flake reference
+- Calls `flake.lib.makeCustomVM` with user-specified parameters
+- Creates VM in `result/` symlink with binary at `result/bin/run-{VM_NAME}-vm`
+- qcow2 disk image created at `{VM_NAME}.qcow2` on first VM start
+
 ### NixOS Rebuild Inside VMs
-- VMs include a `nixos-rebuild` wrapper that automatically uses flakes (virtualisation-parameterized.nix:121-134)
-- `/etc/nixos` is a writable directory (not symlinks) initialized by activation script (lines 394-425)
+- VMs include a `nixos-rebuild` wrapper that automatically uses flakes (virtualisation-parameterized.nix:122-134)
+- `/etc/nixos` is a writable directory (not symlinks) initialized by activation script (lines 411-442)
 - Configuration files stored in `/etc/nixos-template` and copied to `/etc/nixos` on first boot
-- Git repo automatically initialized in `/etc/nixos` (required for flakes)
+- Git repo automatically initialized in `/etc/nixos` (required for flakes) with initial commit
 - Users can run `sudo nixos-rebuild switch` without the `--flake` flag
 - The wrapper detects `/etc/nixos/flake.nix` and automatically adds `--flake /etc/nixos#vmname`
-- `rebuild` command is a convenience wrapper that handles git commits and rebuilds
+- `rebuild` command is a convenience wrapper (lines 350-408) that handles git commits and rebuilds
 
 ### Port Forwarding
 - **SSH**: Host 2222 → Guest 22
@@ -116,18 +133,28 @@ nix flake check /etc/nixos
 - Name must be alphanumeric with hyphens/underscores only
 
 ### Flake Reference Detection
-vm-selector.sh detects flake location through multiple methods:
-1. Path prefix in parent process arguments
-2. NIX_ATTRS_JSON_FILE environment variable
+vm-selector.sh detects flake location through multiple methods (lines 6-81):
+1. Path prefix in parent process arguments (e.g., `nix run path:...`)
+2. NIX_ATTRS_JSON_FILE environment variable (from Nix)
 3. Current directory flake.nix
-4. Smart detection for common project paths
+4. Smart detection for common project paths (Projects/nixos-configs/ai-vm)
 5. Fallback to github:dvaerum/ai-vm
+
+Detection determines where VM files are created and which flake reference to use for rebuilds.
 
 ### Overlay Filesystem
 When `--overlay` is enabled, sets `virtualisation.writableStore = true`, making Nix store writable via overlay. Slower startup but clean state on each boot.
 
 ### Audio Implementation
 Uses PulseAudio passthrough (not PipeWire). Creates audio group and adds users when `enableAudio = true`. VM name used for PulseAudio device naming.
+
+### Startup Script Generation
+When VMs are created via vm-selector.sh, a reusable `start-{VM_NAME}.sh` script is generated:
+- Contains embedded VM configuration (RAM, CPU, storage, features)
+- Documents all shared folders with mount point mappings
+- Includes SSH connection instructions
+- Can be run directly to restart the VM without rebuilding
+- Location depends on flake type (see VM storage location above)
 
 ## Modifying VMs
 
@@ -138,18 +165,31 @@ Edit `nixos/modules/packages.nix` or modify `/etc/nixos/configuration.nix` insid
 Modify `virtualisation.forwardPorts` in `nixos/modules/virtualisation-parameterized.nix:23-27`.
 
 ### Adjusting Hardware Limits
-Validation limits in vm-selector.sh:
-- RAM: max 1024GB
+Validation limits in vm-selector.sh (lines 223-256):
+- RAM: max 1024GB (validated in `validate_numeric` function)
 - CPU: max 128 cores
 - Storage: max 10TB (10000GB)
 
+Values can be any positive integer within these limits, not just the preset options shown in fzf menus.
+
 ## Testing Strategy
 
+### Automated Tests
 Integration tests (tests/integration/):
-- Python-based tests using pytest
-- Comprehensive VM selector testing
-- NixOS configuration validation
+- `comprehensive-vm-selector-test.py`: Python-based pytest suite for VM selector
+- `nixos-rebuild-test.nix`: Validates nixos-rebuild functionality inside VMs
+- `vm-nixos-config-test.py`: Tests NixOS configuration generation
 
 Unit tests (tests/unit.nix):
 - Nix expression validation
 - Module structure testing
+
+### Manual Testing
+- `tests/manual-nixos-rebuild-test.sh`: Interactive test script for verifying:
+  - /etc/nixos directory setup and permissions
+  - Configuration file presence and writability
+  - Git repository initialization
+  - nixos-rebuild wrapper functionality
+  - Configuration modification and rebuild workflow
+
+Run inside a VM via: `ssh -p 2222 dennis@localhost`, then copy or mount the test script.
