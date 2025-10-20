@@ -2,26 +2,47 @@
 
 set -euo pipefail
 
-# Get the directory where this script is located
-# If running from Nix store (via nix run), use current working directory instead
+# Detect execution context and set appropriate flake reference
 if [[ "${BASH_SOURCE[0]}" == /nix/store/* ]]; then
-    SCRIPT_DIR="$(pwd)"
-    echo "Note: Running from Nix store, using current directory: $SCRIPT_DIR"
+    # Running from Nix store (via nix run)
+    echo "Note: Running from Nix store"
 
-    # Check if current directory has a flake.nix (basic validation)
-    if [[ ! -f "$SCRIPT_DIR/flake.nix" ]]; then
-        echo "Error: When using 'nix run', you must run from the AI VM project directory."
-        echo "The current directory ($SCRIPT_DIR) does not contain a flake.nix file."
-        echo ""
-        echo "Solution: cd to the AI VM project directory, then run:"
-        echo "  nix run . -- [your arguments]"
-        echo ""
-        echo "Or use the script directly from the project directory:"
-        echo "  ./vm-selector.sh [your arguments]"
-        exit 1
+    # Try to detect the flake reference from environment or common patterns
+    if [[ -n "${NIX_ATTRS_JSON_FILE:-}" ]] && command -v jq >/dev/null 2>&1; then
+        # Try to extract flake reference from Nix environment
+        FLAKE_REF=$(jq -r '.flakeRef // empty' "${NIX_ATTRS_JSON_FILE}" 2>/dev/null || echo "")
+    fi
+
+    # If we couldn't detect the flake reference, check if current directory has the flake
+    if [[ -z "${FLAKE_REF:-}" ]]; then
+        CURRENT_DIR="$(pwd)"
+        if [[ -f "$CURRENT_DIR/flake.nix" ]]; then
+            # Local flake in current directory
+            FLAKE_REF="git+file://$CURRENT_DIR"
+            SCRIPT_DIR="$CURRENT_DIR"
+            echo "Using local flake in current directory: $CURRENT_DIR"
+        else
+            # Default to github reference as fallback for remote execution
+            FLAKE_REF="github:dvaerum/ai-vm"
+            SCRIPT_DIR="/tmp/ai-vm-remote-$$"
+            echo "Using remote flake reference: $FLAKE_REF"
+            echo "Working directory: $SCRIPT_DIR"
+            mkdir -p "$SCRIPT_DIR"
+        fi
+    else
+        # Extract directory from flake reference if it's a local path
+        if [[ "$FLAKE_REF" == git+file://* ]]; then
+            SCRIPT_DIR="${FLAKE_REF#git+file://}"
+        else
+            SCRIPT_DIR="/tmp/ai-vm-remote-$$"
+            mkdir -p "$SCRIPT_DIR"
+        fi
+        echo "Using flake reference: $FLAKE_REF"
     fi
 else
+    # Direct script execution
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    FLAKE_REF="git+file://$SCRIPT_DIR"
 fi
 
 # Default options (for fzf menu)
@@ -413,7 +434,7 @@ ro_list+="]"
 # Build and run custom VM using nix build
 nix build --impure --expr "
     let
-      flake = builtins.getFlake \"git+file://$SCRIPT_DIR\";
+      flake = builtins.getFlake \"$FLAKE_REF\";
       pkgs = flake.inputs.nixpkgs.legacyPackages.\${builtins.currentSystem};
     in
       flake.lib.\${builtins.currentSystem}.makeCustomVM $selected_ram $selected_cpu $selected_storage $overlay_flag $rw_list $ro_list \"$VM_NAME\" $ENABLE_AUDIO
@@ -495,4 +516,11 @@ echo ""
 echo "To restart this VM later, run: ./start-${VM_NAME}.sh"
 echo ""
 echo "Starting VM now..."
-exec "$SCRIPT_DIR/result/bin/run-${VM_NAME}-vm"
+if [[ "$FLAKE_REF" == github:* ]] || [[ "$FLAKE_REF" == git+* && "$FLAKE_REF" != git+file://* ]]; then
+    # For remote flakes, execute from current directory
+    cd "$SCRIPT_DIR"
+    exec "./result/bin/run-${VM_NAME}-vm"
+else
+    # For local flakes, use the script directory
+    exec "$SCRIPT_DIR/result/bin/run-${VM_NAME}-vm"
+fi
