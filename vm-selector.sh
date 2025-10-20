@@ -7,35 +7,56 @@ if [[ "${BASH_SOURCE[0]}" == /nix/store/* ]]; then
     # Running from Nix store (via nix run)
     echo "Note: Running from Nix store"
 
-    # Try to detect the flake reference from environment or common patterns
-    if [[ -n "${NIX_ATTRS_JSON_FILE:-}" ]] && command -v jq >/dev/null 2>&1; then
-        # Try to extract flake reference from Nix environment
-        FLAKE_REF=$(jq -r '.flakeRef // empty' "${NIX_ATTRS_JSON_FILE}" 2>/dev/null || echo "")
+    # Check command line arguments and environment to detect the flake source
+    FLAKE_REF=""
+    CURRENT_DIR="$(pwd)"
+
+    # Method 1: Check for path: prefix in process arguments (works for nix run path:...)
+    if ps -p $PPID -o args= 2>/dev/null | grep -q "path:"; then
+        # Extract the path from the parent command
+        PARENT_CMD=$(ps -p $PPID -o args= 2>/dev/null || echo "")
+        if [[ "$PARENT_CMD" =~ path:([^[:space:]]+) ]]; then
+            EXTRACTED_PATH="${BASH_REMATCH[1]}"
+            # Convert relative path to absolute
+            if [[ "$EXTRACTED_PATH" != /* ]]; then
+                EXTRACTED_PATH="$CURRENT_DIR/$EXTRACTED_PATH"
+            fi
+            if [[ -f "$EXTRACTED_PATH/flake.nix" ]]; then
+                FLAKE_REF="git+file://$EXTRACTED_PATH"
+                SCRIPT_DIR="$EXTRACTED_PATH"
+                echo "Detected path reference: $EXTRACTED_PATH"
+            fi
+        fi
     fi
 
-    # If we couldn't detect the flake reference, check if current directory has the flake
-    if [[ -z "${FLAKE_REF:-}" ]]; then
-        CURRENT_DIR="$(pwd)"
-        if [[ -f "$CURRENT_DIR/flake.nix" ]]; then
-            # Local flake in current directory
-            FLAKE_REF="git+file://$CURRENT_DIR"
-            SCRIPT_DIR="$CURRENT_DIR"
-            echo "Using local flake in current directory: $CURRENT_DIR"
-        else
-            # Default to github reference as fallback for remote execution
-            FLAKE_REF="github:dvaerum/ai-vm"
-            SCRIPT_DIR="$CURRENT_DIR"
-            echo "Using remote flake reference: $FLAKE_REF"
-            echo "Working directory: $SCRIPT_DIR"
+    # Method 2: Try to extract flake reference from Nix environment
+    if [[ -z "$FLAKE_REF" && -n "${NIX_ATTRS_JSON_FILE:-}" ]] && command -v jq >/dev/null 2>&1; then
+        FLAKE_REF=$(jq -r '.flakeRef // empty' "${NIX_ATTRS_JSON_FILE}" 2>/dev/null || echo "")
+        if [[ -n "$FLAKE_REF" ]]; then
+            echo "Detected flake reference from environment: $FLAKE_REF"
         fi
-    else
-        # Extract directory from flake reference if it's a local path
-        if [[ "$FLAKE_REF" == git+file://* ]]; then
-            SCRIPT_DIR="${FLAKE_REF#git+file://}"
-        else
-            SCRIPT_DIR="$(pwd)"
-        fi
-        echo "Using flake reference: $FLAKE_REF"
+    fi
+
+    # Method 3: Check if current directory has the flake
+    if [[ -z "$FLAKE_REF" && -f "$CURRENT_DIR/flake.nix" ]]; then
+        FLAKE_REF="git+file://$CURRENT_DIR"
+        SCRIPT_DIR="$CURRENT_DIR"
+        echo "Using local flake in current directory: $CURRENT_DIR"
+    fi
+
+    # Method 4: Default to github reference as fallback
+    if [[ -z "$FLAKE_REF" ]]; then
+        FLAKE_REF="github:dvaerum/ai-vm"
+        SCRIPT_DIR="$CURRENT_DIR"
+        echo "Using remote flake reference: $FLAKE_REF"
+        echo "Working directory: $SCRIPT_DIR"
+    fi
+
+    # Extract directory from flake reference if it's a local path
+    if [[ "$FLAKE_REF" == git+file://* ]]; then
+        SCRIPT_DIR="${FLAKE_REF#git+file://}"
+        echo "Using local flake: $FLAKE_REF"
+        echo "Working directory: $SCRIPT_DIR"
     fi
 else
     # Direct script execution
