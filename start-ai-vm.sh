@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 # Generated VM startup script for: ai-vm
-# Configuration: 8GB RAM, 12 CPU cores, 50GB storage
+# Configuration: 16GB RAM, 12 CPU cores, 100GB storage
 # Overlay: disabled
-# Generated on: Mon Oct 20 07:21:40 PM CEST 2025
+# Generated on: Mon Oct 20 07:29:54 PM CEST 2025
 
 set -euo pipefail
 
@@ -19,9 +19,9 @@ fi
 
 # VM Configuration
 VM_NAME="ai-vm"
-RAM_SIZE=8
+RAM_SIZE=16
 CPU_CORES=12
-STORAGE_SIZE=50
+STORAGE_SIZE=100
 OVERLAY=false
 
 echo "Starting VM: $VM_NAME"

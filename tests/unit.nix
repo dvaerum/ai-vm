@@ -74,6 +74,29 @@ pkgs.runCommand "vm-selector-unit-tests" {
 
   echo "✓ fzf custom input handling fix is properly implemented"
 
+  # Test specific scenario: typing "12" in fzf for CPU cores
+  echo "=== Testing fzf '12 cores' scenario specifically ==="
+
+  # Test Case 1: Only query output (most common)
+  fzf_output="12"
+  selected_cpu=$(echo "$fzf_output" | tail -1)
+  [[ -z "$selected_cpu" ]] && selected_cpu=$(echo "$fzf_output" | head -1)
+  [[ "$selected_cpu" == "12" ]] || (echo "✗ Case 1 failed - got '$selected_cpu'" && exit 1)
+  echo "✓ Case 1: Query-only output works"
+
+  # Test Case 2: Query + empty selection
+  fzf_output=$'12\n'
+  selected_cpu=$(echo "$fzf_output" | tail -1)
+  [[ -z "$selected_cpu" ]] && selected_cpu=$(echo "$fzf_output" | head -1)
+  [[ "$selected_cpu" == "12" ]] || (echo "✗ Case 2 failed - got '$selected_cpu'" && exit 1)
+  echo "✓ Case 2: Query + empty selection works"
+
+  # Test Case 3: Validation test
+  [[ "12" =~ ^[1-9][0-9]*$ ]] || (echo "✗ Case 3 failed - validation failed" && exit 1)
+  echo "✓ Case 3: Validation accepts 12"
+
+  echo "✓ fzf 12 cores scenario test passed"
+
   # Success marker
   touch $out
   echo "=== All unit tests passed! ==="

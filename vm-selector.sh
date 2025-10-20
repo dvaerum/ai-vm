@@ -175,8 +175,16 @@ if [[ "$INTERACTIVE" == "true" ]]; then
 
     # Select CPU cores (allow custom input)
     fzf_output=$(printf "%s\n" "${CPU_OPTIONS[@]}" | fzf --prompt="Select or type CPU cores: " --print-query --height=20%)
+
+    # Debug: Show what fzf actually returned
+    echo "DEBUG: fzf raw output (with od):" >&2
+    echo "$fzf_output" | od -c >&2
+    echo "DEBUG: fzf line count: $(echo "$fzf_output" | wc -l)" >&2
+
     selected_cpu=$(echo "$fzf_output" | tail -1)
+    echo "DEBUG: tail -1 result: '$selected_cpu'" >&2
     [[ -z "$selected_cpu" ]] && selected_cpu=$(echo "$fzf_output" | head -1)
+    echo "DEBUG: final selected_cpu: '$selected_cpu'" >&2
     if [[ -z "$selected_cpu" ]]; then
         echo "Cancelled."
         exit 0
