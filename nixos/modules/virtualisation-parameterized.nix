@@ -298,8 +298,8 @@
       # services.docker.enable = true;
       # virtualisation.docker.enable = true;
 
-      # This file is part of the flake-based configuration
-      # To rebuild: sudo nixos-rebuild switch --flake /etc/nixos#${vmName}
+      # To rebuild the system:
+      # sudo nixos-rebuild switch -I nixos-config=/etc/nixos/configuration.nix
     }
   '';
 
@@ -339,17 +339,20 @@
     ## Quick Commands
 
     ```bash
-    # Rebuild the system
-    sudo nixos-rebuild switch --flake /etc/nixos#${vmName}
+    # Rebuild the system (recommended method for VMs)
+    sudo nixos-rebuild switch -I nixos-config=/etc/nixos/configuration.nix
 
     # Test a configuration without switching
-    sudo nixos-rebuild test --flake /etc/nixos#${vmName}
-
-    # Update the flake inputs
-    sudo nix flake update /etc/nixos
+    sudo nixos-rebuild test -I nixos-config=/etc/nixos/configuration.nix
 
     # Show current configuration
-    sudo nix show-config
+    sudo nix-instantiate --eval -E "with import <nixpkgs/nixos> {}; config.system.nixos.release"
+
+    # Alternative: Install packages temporarily
+    nix-shell -p package-name
+
+    # Note: The flake.nix is provided for reference but VM rebuilds work better
+    # with the traditional nixos-rebuild approach shown above.
     ```
 
     ## Configuration Files
