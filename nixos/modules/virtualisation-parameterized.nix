@@ -270,7 +270,7 @@
       # virtualisation.docker.enable = true;
 
       # To rebuild the system after making changes:
-      # switch
+      # rebuild
     }
   '';
 
@@ -301,8 +301,8 @@
     }
   '';
 
-  # Add a simple 'switch' command for easy VM rebuilds using flakes
-  environment.etc."nixos/switch".source = pkgs.writeShellScript "vm-switch" ''
+  # Add a simple 'rebuild' command for easy VM rebuilds using flakes
+  environment.etc."nixos/rebuild".source = pkgs.writeShellScript "vm-rebuild" ''
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -338,27 +338,39 @@
         fi
     fi
 
-    # Run the rebuild with flakes
-    if sudo nixos-rebuild switch --flake .#${vmName} "$@"; then
+    # Try to rebuild with flakes first, fallback to traditional method
+    echo "🔄 Attempting flake-based rebuild..."
+    if sudo nixos-rebuild switch --flake .#${vmName} "$@" 2>/dev/null; then
         echo ""
         echo "✅ VM configuration rebuilt successfully with flakes!"
         echo "   Changes are now active."
     else
+        echo "⚠️  Flake rebuild failed, trying traditional method..."
         echo ""
-        echo "❌ Rebuild failed. Check the error messages above."
-        echo ""
-        echo "💡 Troubleshooting tips:"
-        echo "   - Check your configuration.nix for syntax errors"
-        echo "   - Run 'nix flake check' to validate the flake"
-        echo "   - Try 'sudo nixos-rebuild switch --flake .#${vmName} --show-trace' for more details"
-        exit 1
+
+        # Fallback to traditional rebuild method
+        if sudo nixos-rebuild switch -I nixos-config=/etc/nixos/configuration.nix "$@"; then
+            echo ""
+            echo "✅ VM configuration rebuilt successfully (traditional method)!"
+            echo "   Changes are now active."
+            echo ""
+            echo "ℹ️  Note: Used traditional rebuild due to flake limitations in VM environment."
+        else
+            echo ""
+            echo "❌ Both flake and traditional rebuilds failed."
+            echo ""
+            echo "💡 Troubleshooting tips:"
+            echo "   - Check your configuration.nix for syntax errors"
+            echo "   - Try running: sudo nixos-rebuild switch -I nixos-config=/etc/nixos/configuration.nix --show-trace"
+            exit 1
+        fi
     fi
   '';
 
-  # Make the switch command executable and accessible
-  system.activationScripts.vm-switch-command = ''
-    chmod +x /etc/nixos/switch
-    ln -sf /etc/nixos/switch /run/current-system/sw/bin/switch
+  # Make the rebuild command executable and accessible
+  system.activationScripts.vm-rebuild-command = ''
+    chmod +x /etc/nixos/rebuild
+    ln -sf /etc/nixos/rebuild /run/current-system/sw/bin/rebuild
   '';
 
   # Add a helpful README
@@ -371,7 +383,7 @@
 
     ```bash
     # Easy flake-based rebuild (recommended)
-    switch
+    rebuild
 
     # Alternative flake commands
     sudo nixos-rebuild switch --flake /etc/nixos#${vmName}
@@ -395,7 +407,7 @@
     environment.systemPackages = with pkgs; [ firefox git htop ];
 
     # Rebuild with flakes using the simple command
-    switch
+    rebuild
 
     # Or use the full flake command
     sudo nixos-rebuild switch --flake /etc/nixos#${vmName}
