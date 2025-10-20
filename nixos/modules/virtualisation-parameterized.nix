@@ -144,6 +144,33 @@
     }
   '';
 
+  # Create a flake.lock file to avoid lock file creation issues
+  environment.etc."nixos/flake.lock".text = builtins.toJSON {
+    nodes = {
+      nixpkgs = {
+        locked = {
+          lastModified = 1729534635;
+          narHash = "sha256-xuVPp0iNKlAaHUbhHTZ/XnRLaHX1lY3A4IW6YSX8eOw=";
+          owner = "NixOS";
+          repo = "nixpkgs";
+          rev = "5e04827322c3a2b315c4a7dd3ba0df6e0fb33f5c";
+          type = "github";
+        };
+        original = {
+          owner = "NixOS";
+          ref = "nixos-unstable";
+          repo = "nixpkgs";
+          type = "github";
+        };
+      };
+      root = {
+        inputs.nixpkgs = "nixpkgs";
+      };
+    };
+    root = "root";
+    version = 7;
+  };
+
   # Install a complete configuration.nix for the VM
   environment.etc."nixos/configuration.nix".text = ''
     # ${vmName} VM Configuration
@@ -338,39 +365,48 @@
         fi
     fi
 
-    # Try to rebuild with flakes first, fallback to traditional method
-    echo "🔄 Attempting flake-based rebuild..."
-    if sudo nixos-rebuild switch --flake .#${vmName} "$@" 2>/dev/null; then
+    # Update git repo with any changes (flakes require clean git state)
+    if git status --porcelain | grep -q .; then
+        git add .
+        git commit --quiet -m "Update VM configuration $(date)"
+    fi
+
+    # Run the rebuild with flakes
+    echo "🔄 Rebuilding with flakes..."
+    if sudo nixos-rebuild switch --flake .#${vmName} "$@"; then
         echo ""
         echo "✅ VM configuration rebuilt successfully with flakes!"
         echo "   Changes are now active."
     else
-        echo "⚠️  Flake rebuild failed, trying traditional method..."
         echo ""
-
-        # Fallback to traditional rebuild method
-        if sudo nixos-rebuild switch -I nixos-config=/etc/nixos/configuration.nix "$@"; then
-            echo ""
-            echo "✅ VM configuration rebuilt successfully (traditional method)!"
-            echo "   Changes are now active."
-            echo ""
-            echo "ℹ️  Note: Used traditional rebuild due to flake limitations in VM environment."
-        else
-            echo ""
-            echo "❌ Both flake and traditional rebuilds failed."
-            echo ""
-            echo "💡 Troubleshooting tips:"
-            echo "   - Check your configuration.nix for syntax errors"
-            echo "   - Try running: sudo nixos-rebuild switch -I nixos-config=/etc/nixos/configuration.nix --show-trace"
-            exit 1
-        fi
+        echo "❌ Flake rebuild failed. Check the error messages above."
+        echo ""
+        echo "💡 Troubleshooting tips:"
+        echo "   - Check your configuration.nix for syntax errors"
+        echo "   - Run 'nix flake check .' to validate the flake"
+        echo "   - Try: sudo nixos-rebuild switch --flake .#${vmName} --show-trace"
+        exit 1
     fi
   '';
 
-  # Make the rebuild command executable and accessible
+  # Make the rebuild command executable and accessible, and set up /etc/nixos for flakes
   system.activationScripts.vm-rebuild-command = ''
     chmod +x /etc/nixos/rebuild
     ln -sf /etc/nixos/rebuild /run/current-system/sw/bin/rebuild
+
+    # Make /etc/nixos writable for flake operations
+    chmod 755 /etc/nixos
+    chmod 644 /etc/nixos/flake.nix /etc/nixos/flake.lock /etc/nixos/configuration.nix /etc/nixos/hardware-configuration.nix
+
+    # Initialize git repo if it doesn't exist (required for flakes)
+    if [ ! -d /etc/nixos/.git ]; then
+      cd /etc/nixos
+      ${pkgs.git}/bin/git init --quiet
+      ${pkgs.git}/bin/git config user.name "VM User"
+      ${pkgs.git}/bin/git config user.email "user@vm.local"
+      ${pkgs.git}/bin/git add .
+      ${pkgs.git}/bin/git commit --quiet -m "Initial VM configuration"
+    fi
   '';
 
   # Add a helpful README
