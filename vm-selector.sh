@@ -162,7 +162,8 @@ if [[ "$INTERACTIVE" == "true" ]]; then
     fi
 
     # Select RAM (allow custom input)
-    fzf_output=$(printf "%s\n" "${RAM_OPTIONS[@]}" | fzf --prompt="Select or type RAM (GB): " --print-query --height=20%)
+    # Note: fzf returns exit code 1 when typing custom values, so we need to handle that
+    fzf_output=$(printf "%s\n" "${RAM_OPTIONS[@]}" | fzf --prompt="Select or type RAM (GB): " --print-query --height=20% || true)
     selected_ram=$(echo "$fzf_output" | tail -1)
     [[ -z "$selected_ram" ]] && selected_ram=$(echo "$fzf_output" | head -1)
     if [[ -z "$selected_ram" ]]; then
@@ -174,17 +175,10 @@ if [[ "$INTERACTIVE" == "true" ]]; then
     fi
 
     # Select CPU cores (allow custom input)
-    fzf_output=$(printf "%s\n" "${CPU_OPTIONS[@]}" | fzf --prompt="Select or type CPU cores: " --print-query --height=20%)
-
-    # Debug: Show what fzf actually returned
-    echo "DEBUG: fzf raw output (with od):" >&2
-    echo "$fzf_output" | od -c >&2
-    echo "DEBUG: fzf line count: $(echo "$fzf_output" | wc -l)" >&2
-
+    # Note: fzf returns exit code 1 when typing custom values, so we need to handle that
+    fzf_output=$(printf "%s\n" "${CPU_OPTIONS[@]}" | fzf --prompt="Select or type CPU cores: " --print-query --height=20% || true)
     selected_cpu=$(echo "$fzf_output" | tail -1)
-    echo "DEBUG: tail -1 result: '$selected_cpu'" >&2
     [[ -z "$selected_cpu" ]] && selected_cpu=$(echo "$fzf_output" | head -1)
-    echo "DEBUG: final selected_cpu: '$selected_cpu'" >&2
     if [[ -z "$selected_cpu" ]]; then
         echo "Cancelled."
         exit 0
@@ -194,7 +188,7 @@ if [[ "$INTERACTIVE" == "true" ]]; then
     fi
 
     # Select storage (allow custom input)
-    fzf_output=$(printf "%s\n" "${STORAGE_OPTIONS[@]}" | fzf --prompt="Select or type storage (GB): " --print-query --height=20%)
+    fzf_output=$(printf "%s\n" "${STORAGE_OPTIONS[@]}" | fzf --prompt="Select or type storage (GB): " --print-query --height=20% || true)
     selected_storage=$(echo "$fzf_output" | tail -1)
     [[ -z "$selected_storage" ]] && selected_storage=$(echo "$fzf_output" | head -1)
     if [[ -z "$selected_storage" ]]; then
