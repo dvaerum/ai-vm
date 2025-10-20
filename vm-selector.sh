@@ -15,27 +15,18 @@ if [[ "${BASH_SOURCE[0]}" == /nix/store/* ]]; then
     if ps -p $PPID -o args= 2>/dev/null | grep -q "path:"; then
         # Extract the path from the parent command
         PARENT_CMD=$(ps -p $PPID -o args= 2>/dev/null || echo "")
-        echo "Debug: Parent command: $PARENT_CMD"
         if [[ "$PARENT_CMD" =~ path:([^[:space:]]+) ]]; then
             EXTRACTED_PATH="${BASH_REMATCH[1]}"
-            echo "Debug: Extracted path: $EXTRACTED_PATH"
             # Convert relative path to absolute
             if [[ "$EXTRACTED_PATH" != /* ]]; then
                 EXTRACTED_PATH="$CURRENT_DIR/$EXTRACTED_PATH"
             fi
-            echo "Debug: Absolute path: $EXTRACTED_PATH"
             if [[ -f "$EXTRACTED_PATH/flake.nix" ]]; then
                 FLAKE_REF="git+file://$EXTRACTED_PATH"
                 SCRIPT_DIR="$EXTRACTED_PATH"
                 echo "Detected path reference: $EXTRACTED_PATH"
-            else
-                echo "Debug: No flake.nix found at $EXTRACTED_PATH"
             fi
-        else
-            echo "Debug: Could not extract path from command"
         fi
-    else
-        echo "Debug: No 'path:' found in parent process"
     fi
 
     # Method 2: Try to extract flake reference from Nix environment
