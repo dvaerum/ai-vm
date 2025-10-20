@@ -1,0 +1,64 @@
+{ pkgs ? import <nixpkgs> { } }:
+
+let
+  # Import the vm-selector script for testing
+  vmSelectorScript = ../vm-selector.sh;
+in
+
+pkgs.runCommand "vm-selector-unit-tests" {
+  buildInputs = with pkgs; [ bash ];
+} ''
+  # Test script syntax
+  echo "=== Testing vm-selector.sh syntax ==="
+  bash -n ${vmSelectorScript}
+  echo "✓ Script syntax is valid"
+
+  # Test script has required functions
+  echo "=== Testing script structure ==="
+
+  # Check for required functions and variables
+  grep -q "show_help()" ${vmSelectorScript} || (echo "✗ show_help function missing" && exit 1)
+  grep -q "validate_numeric()" ${vmSelectorScript} || (echo "✗ validate_numeric function missing" && exit 1)
+  grep -q "RAM_OPTIONS=" ${vmSelectorScript} || (echo "✗ RAM_OPTIONS variable missing" && exit 1)
+  grep -q "CPU_OPTIONS=" ${vmSelectorScript} || (echo "✗ CPU_OPTIONS variable missing" && exit 1)
+  grep -q "STORAGE_OPTIONS=" ${vmSelectorScript} || (echo "✗ STORAGE_OPTIONS variable missing" && exit 1)
+
+  echo "✓ All required functions and variables present"
+
+  # Test help text content
+  echo "=== Testing help text content ==="
+
+  grep -q "\-\-ram RAM" ${vmSelectorScript} || (echo "✗ --ram option missing from help" && exit 1)
+  grep -q "\-\-cpu CPU" ${vmSelectorScript} || (echo "✗ --cpu option missing from help" && exit 1)
+  grep -q "\-\-storage STORAGE" ${vmSelectorScript} || (echo "✗ --storage option missing from help" && exit 1)
+  grep -q "\-\-share-rw PATH" ${vmSelectorScript} || (echo "✗ --share-rw option missing from help" && exit 1)
+  grep -q "\-\-share-ro PATH" ${vmSelectorScript} || (echo "✗ --share-ro option missing from help" && exit 1)
+  grep -q "\-\-name NAME" ${vmSelectorScript} || (echo "✗ --name option missing from help" && exit 1)
+  grep -q "\-\-overlay" ${vmSelectorScript} || (echo "✗ --overlay option missing from help" && exit 1)
+
+  echo "✓ All command line options documented in help"
+
+  # Test validation patterns
+  echo "=== Testing validation patterns ==="
+
+  grep -q "\[a-zA-Z0-9_-\]" ${vmSelectorScript} || (echo "✗ VM name validation pattern missing" && exit 1)
+  grep -q "\[1-9\]\[0-9\]" ${vmSelectorScript} || (echo "✗ Numeric validation pattern missing" && exit 1)
+
+  echo "✓ Validation patterns are present"
+
+  # Test script contains all required argument parsing
+  echo "=== Testing argument parsing ==="
+
+  grep -q "\-r|\-\-ram)" ${vmSelectorScript} || (echo "✗ RAM argument parsing missing" && exit 1)
+  grep -q "\-c|\-\-cpu)" ${vmSelectorScript} || (echo "✗ CPU argument parsing missing" && exit 1)
+  grep -q "\-s|\-\-storage)" ${vmSelectorScript} || (echo "✗ Storage argument parsing missing" && exit 1)
+  grep -q "\-n|\-\-name)" ${vmSelectorScript} || (echo "✗ Name argument parsing missing" && exit 1)
+  grep -q "\-\-share-rw)" ${vmSelectorScript} || (echo "✗ Share-RW argument parsing missing" && exit 1)
+  grep -q "\-\-share-ro)" ${vmSelectorScript} || (echo "✗ Share-RO argument parsing missing" && exit 1)
+
+  echo "✓ All argument parsing cases are present"
+
+  # Success marker
+  touch $out
+  echo "=== All unit tests passed! ==="
+''

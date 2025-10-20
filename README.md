@@ -13,21 +13,24 @@ A NixOS virtual machine configured for running Claude Code and AI development to
 
 ## Quick Start
 
-1. **Interactive VM Manager** (Recommended):
+1. **Interactive VM Selector** (Recommended):
    ```bash
    nix run
    ```
-   This opens an interactive fzf menu with VM options including:
-   - 🚀 Start VM (quick start)
-   - 🔨 Build VM
-   - 🏃 Run built VM  
-   - 🔌 SSH into VM
-   - 🧹 Clean build artifacts
-   - ⚙️ Development shell
-   - 📋 Show VM status
-   - ❓ Help
+   This opens interactive fzf menus to select:
+   - 💾 RAM size (2GB to 32GB)
+   - ⚡ CPU cores (1 to 8 cores)
+   - 💿 Storage size (20GB to 200GB)
+   - 🔄 Overlay filesystem option
 
-2. Or run specific VM size directly:
+2. **Command Line Interface**:
+   ```bash
+   nix run .#default -- --help                          # Show help
+   nix run .#default -- --ram 8 --cpu 4 --storage 100  # Direct launch (8GB RAM, 4 cores, 100GB)
+   nix run .#default -- -r 16 -c 8 -s 200 --overlay     # With overlay (16GB RAM, 8 cores, 200GB)
+   ```
+
+3. Or run specific VM size directly:
    ```bash
    nix run .#vm                     # Default (8GB-2CPU-50GB)
    nix run .#vm-2gb-1cpu-20gb       # Minimal setup
@@ -36,7 +39,7 @@ A NixOS virtual machine configured for running Claude Code and AI development to
    nix run .#vm-32gb-8cpu-200gb     # Maximum performance
    ```
 
-3. Or build and run manually:
+4. Or build and run manually:
    ```bash
    nix build .#vm-[RAM]-[CPU]-[STORAGE]  # Any combination
    # Examples:
