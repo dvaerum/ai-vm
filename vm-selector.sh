@@ -466,9 +466,20 @@ for path in "${SHARED_RO[@]}"; do
 done
 ro_list+="]"
 
+# Create a dedicated VM directory for better organization
+if [[ "$FLAKE_REF" == github:* ]] || [[ "$FLAKE_REF" == git+* && "$FLAKE_REF" != git+file://* ]]; then
+    # For remote flakes, create VMs in a dedicated directory
+    VM_DIR="$HOME/.local/share/ai-vms"
+    mkdir -p "$VM_DIR"
+    cd "$VM_DIR"
+    echo "VM files will be created in: $VM_DIR"
+else
+    # For local flakes, use the project directory
+    VM_DIR="$SCRIPT_DIR"
+    cd "$VM_DIR"
+fi
+
 # Build and run custom VM using nix build
-# Change to working directory for the build
-cd "$SCRIPT_DIR"
 
 nix build --impure --expr "
     let
@@ -489,13 +500,14 @@ cat > "start-${VM_NAME}.sh" << EOF
 # Configuration: ${selected_ram}GB RAM, ${selected_cpu} CPU cores, ${selected_storage}GB storage
 # Overlay: $overlay_status, Audio: $audio_status$shared_summary
 # Generated on: $(date)
+# VM Directory: $VM_DIR
 
 set -euo pipefail
 
 SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 cd "\$SCRIPT_DIR"
 
-# Note: The VM was built from: $SCRIPT_DIR
+# Note: The VM was built from flake: $FLAKE_REF
 
 # Check if VM files exist
 if [[ ! -f "${VM_NAME}.qcow2" ]]; then
@@ -547,11 +559,26 @@ EOF
 
 chmod +x "start-${VM_NAME}.sh"
 
-echo "Created files:"
+echo "Created files in $VM_DIR:"
 echo "  - ${VM_NAME}.qcow2 (will be created when VM starts)"
 echo "  - start-${VM_NAME}.sh (executable startup script)"
 echo ""
-echo "To restart this VM later, run: ./start-${VM_NAME}.sh"
+
+# For remote execution, create a convenient symlink in the current directory
+if [[ "$VM_DIR" != "$(pwd)" ]]; then
+    CURRENT_DIR="$(pwd)"
+    if [[ ! -e "$CURRENT_DIR/start-${VM_NAME}.sh" ]]; then
+        ln -sf "$VM_DIR/start-${VM_NAME}.sh" "$CURRENT_DIR/start-${VM_NAME}.sh"
+        echo "Created convenience symlink: $CURRENT_DIR/start-${VM_NAME}.sh"
+        echo ""
+    fi
+    echo "To restart this VM later:"
+    echo "  ./start-${VM_NAME}.sh (via symlink)"
+    echo "  cd $VM_DIR && ./start-${VM_NAME}.sh (direct)"
+    echo "  $VM_DIR/start-${VM_NAME}.sh (full path)"
+else
+    echo "To restart this VM later, run: ./start-${VM_NAME}.sh"
+fi
 echo ""
 echo "Starting VM now..."
 exec "./result/bin/run-${VM_NAME}-vm"
