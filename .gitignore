@@ -4,6 +4,7 @@ result*
 # VM disk images
 *.qcow2
 *.img
+start-*.sh
 
 # Temporary files
 *.tmp
