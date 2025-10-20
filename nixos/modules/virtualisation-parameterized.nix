@@ -58,7 +58,7 @@
         name = mkMountTag "rw" path;
         value = {
           source = path;
-          target = "/mnt/host-rw${path}";
+          target = "/mnt/host-rw/${builtins.baseNameOf path}";
         };
       }) sharedFoldersRW)) //
       # Read-only shared folders (note: readonly is enforced via mount options, not via QEMU)
@@ -66,7 +66,7 @@
         name = mkMountTag "ro" path;
         value = {
           source = path;
-          target = "/mnt/host-ro${path}";
+          target = "/mnt/host-ro/${builtins.baseNameOf path}";
         };
       }) sharedFoldersRO));
 
@@ -85,7 +85,7 @@
           in "${prefix}${pathHash}-${shortBasename}";
       in
       builtins.listToAttrs (builtins.map (path: {
-        name = "/mnt/host-ro${path}";
+        name = "/mnt/host-ro/${builtins.baseNameOf path}";
         value = {
           device = mkMountTag "ro" path;
           fsType = "9p";

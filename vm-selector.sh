@@ -522,14 +522,14 @@ EOF
     if [[ ${#SHARED_RW[@]} -gt 0 ]]; then
         echo "echo \"Read-write shared folders:\"" >> "start-${VM_NAME}.sh"
         for path in "${SHARED_RW[@]}"; do
-            echo "echo \"  Host: $path → VM: /mnt/host-rw$path\"" >> "start-${VM_NAME}.sh"
+            echo "echo \"  Host: $path → VM: /mnt/host-rw/$(basename "$path")\"" >> "start-${VM_NAME}.sh"
         done
     fi
 
     if [[ ${#SHARED_RO[@]} -gt 0 ]]; then
         echo "echo \"Read-only shared folders:\"" >> "start-${VM_NAME}.sh"
         for path in "${SHARED_RO[@]}"; do
-            echo "echo \"  Host: $path → VM: /mnt/host-ro$path (read-only)\"" >> "start-${VM_NAME}.sh"
+            echo "echo \"  Host: $path → VM: /mnt/host-ro/$(basename "$path") (read-only)\"" >> "start-${VM_NAME}.sh"
         done
     fi
 
