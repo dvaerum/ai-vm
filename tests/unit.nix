@@ -58,6 +58,22 @@ pkgs.runCommand "vm-selector-unit-tests" {
 
   echo "✓ All argument parsing cases are present"
 
+  # Test fzf custom input handling fix
+  echo "=== Testing fzf custom input handling ==="
+
+  # Check that the script has the correct fzf output handling logic
+  grep -q "fzf_output=.*fzf.*--print-query" ${vmSelectorScript} || (echo "✗ fzf output capture missing" && exit 1)
+
+  # Check for the fallback logic pattern (separate lines)
+  grep -q "tail -1" ${vmSelectorScript} || (echo "✗ tail -1 extraction missing" && exit 1)
+  grep -q "head -1" ${vmSelectorScript} || (echo "✗ head -1 fallback missing" && exit 1)
+  grep -q "\[\[ -z.*\]\] && .*head -1" ${vmSelectorScript} || (echo "✗ fallback condition missing" && exit 1)
+
+  # Check that all three selection types (RAM, CPU, Storage) have the fix applied
+  grep -c "fzf_output=.*fzf.*--print-query" ${vmSelectorScript} | grep -q "3" || (echo "✗ fzf fix not applied to all three selection types" && exit 1)
+
+  echo "✓ fzf custom input handling fix is properly implemented"
+
   # Success marker
   touch $out
   echo "=== All unit tests passed! ==="
