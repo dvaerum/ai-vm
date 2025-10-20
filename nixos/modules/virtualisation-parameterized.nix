@@ -298,7 +298,10 @@
       # services.docker.enable = true;
       # virtualisation.docker.enable = true;
 
-      # To rebuild the system:
+      # To rebuild the system after making changes:
+      # switch
+      #
+      # Or use the full command:
       # sudo nixos-rebuild switch -I nixos-config=/etc/nixos/configuration.nix
     }
   '';
@@ -330,6 +333,39 @@
     }
   '';
 
+  # Add a simple 'switch' command for easy VM rebuilds
+  environment.etc."nixos/switch".source = pkgs.writeShellScript "vm-switch" ''
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Simple VM rebuild command
+    echo "🔄 Rebuilding ${vmName} VM configuration..."
+    echo ""
+
+    # Check if configuration file exists
+    if [[ ! -f /etc/nixos/configuration.nix ]]; then
+        echo "❌ Error: /etc/nixos/configuration.nix not found"
+        exit 1
+    fi
+
+    # Run the rebuild
+    if sudo nixos-rebuild switch -I nixos-config=/etc/nixos/configuration.nix "$@"; then
+        echo ""
+        echo "✅ VM configuration rebuilt successfully!"
+        echo "   Changes are now active."
+    else
+        echo ""
+        echo "❌ Rebuild failed. Check the error messages above."
+        exit 1
+    fi
+  '';
+
+  # Make the switch command executable and accessible
+  system.activationScripts.vm-switch-command = ''
+    chmod +x /etc/nixos/switch
+    ln -sf /etc/nixos/switch /run/current-system/sw/bin/switch
+  '';
+
   # Add a helpful README
   environment.etc."nixos/README.md".text = ''
     # ${vmName} VM Configuration
@@ -339,20 +375,34 @@
     ## Quick Commands
 
     ```bash
-    # Rebuild the system (recommended method for VMs)
-    sudo nixos-rebuild switch -I nixos-config=/etc/nixos/configuration.nix
+    # Easy rebuild command (recommended)
+    switch
 
-    # Test a configuration without switching
+    # Alternative rebuild methods
+    sudo nixos-rebuild switch -I nixos-config=/etc/nixos/configuration.nix
     sudo nixos-rebuild test -I nixos-config=/etc/nixos/configuration.nix
 
     # Show current configuration
     sudo nix-instantiate --eval -E "with import <nixpkgs/nixos> {}; config.system.nixos.release"
 
-    # Alternative: Install packages temporarily
+    # Install packages temporarily
     nix-shell -p package-name
+    ```
 
-    # Note: The flake.nix is provided for reference but VM rebuilds work better
-    # with the traditional nixos-rebuild approach shown above.
+    ## Usage Examples
+
+    ```bash
+    # Edit the configuration
+    sudo nano /etc/nixos/configuration.nix
+
+    # Add packages (add to environment.systemPackages)
+    environment.systemPackages = with pkgs; [ firefox git htop ];
+
+    # Rebuild with the simple command
+    switch
+
+    # Or test changes without switching
+    sudo nixos-rebuild test -I nixos-config=/etc/nixos/configuration.nix
     ```
 
     ## Configuration Files
