@@ -24,18 +24,16 @@ if [[ "${BASH_SOURCE[0]}" == /nix/store/* ]]; then
         else
             # Default to github reference as fallback for remote execution
             FLAKE_REF="github:dvaerum/ai-vm"
-            SCRIPT_DIR="/tmp/ai-vm-remote-$$"
+            SCRIPT_DIR="$CURRENT_DIR"
             echo "Using remote flake reference: $FLAKE_REF"
             echo "Working directory: $SCRIPT_DIR"
-            mkdir -p "$SCRIPT_DIR"
         fi
     else
         # Extract directory from flake reference if it's a local path
         if [[ "$FLAKE_REF" == git+file://* ]]; then
             SCRIPT_DIR="${FLAKE_REF#git+file://}"
         else
-            SCRIPT_DIR="/tmp/ai-vm-remote-$$"
-            mkdir -p "$SCRIPT_DIR"
+            SCRIPT_DIR="$(pwd)"
         fi
         echo "Using flake reference: $FLAKE_REF"
     fi
@@ -432,6 +430,9 @@ done
 ro_list+="]"
 
 # Build and run custom VM using nix build
+# Change to working directory for the build
+cd "$SCRIPT_DIR"
+
 nix build --impure --expr "
     let
       flake = builtins.getFlake \"$FLAKE_REF\";
@@ -516,11 +517,4 @@ echo ""
 echo "To restart this VM later, run: ./start-${VM_NAME}.sh"
 echo ""
 echo "Starting VM now..."
-if [[ "$FLAKE_REF" == github:* ]] || [[ "$FLAKE_REF" == git+* && "$FLAKE_REF" != git+file://* ]]; then
-    # For remote flakes, execute from current directory
-    cd "$SCRIPT_DIR"
-    exec "./result/bin/run-${VM_NAME}-vm"
-else
-    # For local flakes, use the script directory
-    exec "$SCRIPT_DIR/result/bin/run-${VM_NAME}-vm"
-fi
+exec "./result/bin/run-${VM_NAME}-vm"
