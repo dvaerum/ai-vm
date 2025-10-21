@@ -1,5 +1,20 @@
 { config, pkgs, memorySize ? 8192, cores ? 2, diskSize ? 51200, useOverlay ? false, sharedFoldersRW ? [], sharedFoldersRO ? [], vmName ? "ai-vm", enableAudio ? false, ... }:
 
+let
+  # Generate short mount tag from path (max 31 chars for QEMU)
+  # Shared function used by both sharedDirectories and fileSystems
+  mkMountTag = prefix: path:
+    let
+      # Get basename and hash for uniqueness
+      basename = builtins.baseNameOf path;
+      pathHash = builtins.substring 0 8 (builtins.hashString "sha256" path);
+      # Limit total length: prefix(3) + hash(8) + dash(1) + basename(max 19) = 31
+      maxBasename = 19;
+      shortBasename = if builtins.stringLength basename > maxBasename
+                     then builtins.substring 0 maxBasename basename
+                     else basename;
+    in "${prefix}${pathHash}-${shortBasename}";
+in
 {
   # Set system hostname to VM name
   networking.hostName = pkgs.lib.mkForce vmName;
@@ -13,8 +28,14 @@
     # Disable graphics for headless operation
     virtualisation.graphics = false;
 
-    # Configure writable store based on overlay option
-    virtualisation.writableStore = useOverlay;
+    # Configure writable store
+    # Always enable writable store to support nested VM creation
+    # The difference is in whether overlay changes persist to disk or tmpfs
+    virtualisation.writableStore = true;
+
+    # When overlay flag is NOT set, persist overlay to disk for nested VM support
+    # When overlay flag IS set, use tmpfs for clean state on each boot (original behavior)
+    virtualisation.writableStoreUseTmpfs = useOverlay;
 
     # Use custom VM name for qcow2 file
     virtualisation.diskImage = "./${vmName}.qcow2";
@@ -39,20 +60,14 @@
 
     # Shared folders configuration
     virtualisation.sharedDirectories =
-      let
-        # Generate short mount tag from path (max 31 chars for QEMU)
-        mkMountTag = prefix: path:
-          let
-            # Get basename and hash for uniqueness
-            basename = builtins.baseNameOf path;
-            pathHash = builtins.substring 0 8 (builtins.hashString "sha256" path);
-            # Limit total length: prefix(3) + hash(8) + dash(1) + basename(max 19) = 31
-            maxBasename = 19;
-            shortBasename = if builtins.stringLength basename > maxBasename
-                           then builtins.substring 0 maxBasename basename
-                           else basename;
-          in "${prefix}${pathHash}-${shortBasename}";
-      in
+      # Host Nix store (mounted as read-only to serve as binary cache)
+      # This allows nested VMs to access packages from the host without rebuilding
+      {
+        "nix-store" = {
+          source = "/nix/store";
+          target = "/nix/.ro-store";
+        };
+      } //
       # Read-write shared folders
       (builtins.listToAttrs (builtins.map (path: {
         name = mkMountTag "rw" path;
@@ -72,42 +87,34 @@
 
     # Mount shared folders as read-only where needed
     fileSystems =
-      let
-        # Use same mount tag generation as above
-        mkMountTag = prefix: path:
-          let
-            basename = builtins.baseNameOf path;
-            pathHash = builtins.substring 0 8 (builtins.hashString "sha256" path);
-            maxBasename = 19;
-            shortBasename = if builtins.stringLength basename > maxBasename
-                           then builtins.substring 0 maxBasename basename
-                           else basename;
-          in "${prefix}${pathHash}-${shortBasename}";
-      in
-      builtins.listToAttrs (builtins.map (path: {
+      # Mount host Nix store with optimized cache settings for binary cache usage
+      # This is the key to nested VM support - VMs can access host packages directly
+      {
+        "/nix/.ro-store" = {
+          device = "nix-store";
+          fsType = "9p";
+          options = ["trans=virtio" "version=9p2000.L" "msize=104857600" "cache=loose" "ro"];
+          neededForBoot = true;
+        };
+      } //
+      # User-specified read-only shared folders
+      (builtins.listToAttrs (builtins.map (path: {
         name = "/mnt/host-ro/${builtins.baseNameOf path}";
         value = {
           device = mkMountTag "ro" path;
           fsType = "9p";
           options = ["trans=virtio" "version=9p2000.L" "ro"];
         };
-      }) sharedFoldersRO);
+      }) sharedFoldersRO));
   };
 
   # Audio system configuration (enabled when audio passthrough is requested)
+  # Uses PulseAudio for compatibility with QEMU's -audiodev pa option
   services.pulseaudio = {
     enable = enableAudio;
     systemWide = false;
     support32Bit = true;
   };
-
-  # For better audio compatibility, we might want to add pipewire support as well
-  # services.pipewire = {
-  #   enable = enableAudio;
-  #   alsa.enable = true;
-  #   alsa.support32Bit = true;
-  #   pulse.enable = true;
-  # };
 
   # Add audio group for users when audio is enabled
   users.groups = pkgs.lib.mkIf enableAudio {
@@ -205,7 +212,10 @@
       # CPU Cores: ${toString cores}
       # Disk: ${toString diskSize}MB
       # Audio: ${if enableAudio then "enabled" else "disabled"}
-      # Overlay: ${if useOverlay then "enabled" else "disabled"}
+      # Overlay: ${if useOverlay then "tmpfs (clean state each boot)" else "disk-based (persists across boots)"}
+      #
+      # Note: All VMs now support nested virtualization (building VMs inside VMs)
+      # thanks to writable Nix store with ${if useOverlay then "in-memory" else "disk-persisted"} overlay
 
       # System configuration
       boot.loader.grub.enable = true;
@@ -375,15 +385,9 @@
         git init --quiet
         git add .
         git commit --quiet -m "Initial VM configuration"
-    else
-        # Add any new changes
-        git add .
-        if ! git diff --cached --quiet; then
-            git commit --quiet -m "Update VM configuration $(date)"
-        fi
     fi
 
-    # Update git repo with any changes (flakes require clean git state)
+    # Commit any changes (flakes require clean git state)
     if git status --porcelain | grep -q .; then
         git add .
         git commit --quiet -m "Update VM configuration $(date)"
@@ -506,7 +510,8 @@
     - **CPU Cores**: ${toString cores}
     - **Disk Size**: ${toString diskSize}MB
     - **Audio**: ${if enableAudio then "enabled" else "disabled"}
-    - **Overlay FS**: ${if useOverlay then "enabled" else "disabled"}
+    - **Overlay FS**: ${if useOverlay then "tmpfs (clean state)" else "disk-based (persistent)"}
+    - **Nested VMs**: Supported (writable Nix store enabled)
 
     ## Customization
 

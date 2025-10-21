@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Development Workflow
+
+**Use Multiple Agents When Possible**: When working on tasks that can be parallelized or benefit from concurrent investigation, use multiple agents to improve efficiency and reduce overall task completion time.
+
 ## Project Overview
 
 This is a NixOS-based VM builder for running Claude Code and AI development environments. It uses Nix flakes to create customizable headless VMs with various hardware configurations (RAM, CPU, storage) and features (audio passthrough, shared folders, overlay filesystem).
@@ -142,8 +146,27 @@ vm-selector.sh detects flake location through multiple methods (lines 6-81):
 
 Detection determines where VM files are created and which flake reference to use for rebuilds.
 
-### Overlay Filesystem
-When `--overlay` is enabled, sets `virtualisation.writableStore = true`, making Nix store writable via overlay. Slower startup but clean state on each boot.
+### Overlay Filesystem and Nested Virtualization
+All VMs now have a writable Nix store using overlay filesystem, enabling nested VM creation (building VMs inside VMs) without additional flags.
+
+**Implementation** (virtualisation-parameterized.nix:31-38):
+- `virtualisation.writableStore = true`: Always enabled for all VMs
+- `virtualisation.writableStoreUseTmpfs = useOverlay`: Controls persistence behavior
+
+**Behavior**:
+- **Without `--overlay` flag** (default): Disk-based overlay that persists across reboots
+  - Nix store changes are saved to qcow2 disk
+  - Supports building nested VMs
+  - Changes persist after reboot
+  - Slightly slower first boot due to overlay setup
+
+- **With `--overlay` flag**: Tmpfs-based overlay (in-memory)
+  - Nix store changes stored in RAM
+  - Clean state on each boot (changes lost on reboot)
+  - Faster operation but uses more RAM
+  - Still supports nested VMs during the session
+
+**Nested VM Support**: All VMs can now create nested VMs (VMs inside VMs) because the Nix store is writable. Previously, only VMs with `--overlay` could do this, but now it's the default behavior with the added benefit of persistence when `--overlay` is not used.
 
 ### Audio Implementation
 Uses PulseAudio passthrough (not PipeWire). Creates audio group and adds users when `enableAudio = true`. VM name used for PulseAudio device naming.

@@ -2,7 +2,7 @@
 
 {
   # Network configuration
-  networking.hostName = "ai-vm";
+  # Note: hostname is set in virtualisation-parameterized.nix based on vmName parameter
   networking.networkmanager.enable = true;
 
   # Enable SSH for remote access

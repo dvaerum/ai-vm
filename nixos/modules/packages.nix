@@ -22,7 +22,7 @@
     ripgrep-all
 
     # Development tools
-    nodejs_20
+    nodejs_22
     python3
     python3Packages.pip
     rustc
