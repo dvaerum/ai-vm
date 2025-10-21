@@ -19,6 +19,30 @@ in
   # Set system hostname to VM name
   networking.hostName = pkgs.lib.mkForce vmName;
 
+  # Firewall configuration
+  # SECURITY: Firewall is enabled by default with only necessary ports allowed
+  # The VM is accessible via port forwarding from the host:
+  #   - Host:2222 -> Guest:22 (SSH)
+  #   - Host:3001 -> Guest:3001 (Development server)
+  #   - Host:9080 -> Guest:9080 (Development server)
+  #
+  # Allowed ports within the VM network:
+  #   - 22: SSH (required for remote access)
+  #   - 3001, 9080: Development servers (common for web development)
+  #
+  # To open additional ports, edit /etc/nixos/configuration.nix and add:
+  #   networking.firewall.allowedTCPPorts = [ 22 3001 9080 YOUR_PORT ];
+  #
+  # To disable firewall (NOT recommended for production):
+  #   networking.firewall.enable = false;
+  #
+  networking.firewall = {
+    enable = true;
+    allowedTCPPorts = [ 22 3001 9080 ];
+    # Uncomment to allow specific UDP ports:
+    # allowedUDPPorts = [ ];
+  };
+
   # VM-specific settings with parameterized size
   virtualisation.vmVariant = {
     virtualisation.memorySize = memorySize;
@@ -217,6 +241,56 @@ in
       # Note: All VMs now support nested virtualization (building VMs inside VMs)
       # thanks to writable Nix store with ${if useOverlay then "in-memory" else "disk-persisted"} overlay
 
+      # ==============================================================================
+      # SECURITY CONSIDERATIONS
+      # ==============================================================================
+      # This VM is configured for LOCAL DEVELOPMENT with convenience over security.
+      # Review these settings before using in production or shared environments:
+      #
+      # 1. EMPTY PASSWORDS (HIGH RISK)
+      #    Current: Users 'dennis' and 'dvv' have empty passwords (hashedPassword = "")
+      #    Risk: Anyone with network access can log in without credentials
+      #    Fix: Generate password with: mkpasswd -m sha-512
+      #         Then set: hashedPassword = "hash-from-mkpasswd";
+      #
+      # 2. PASSWORDLESS SUDO (HIGH RISK)
+      #    Current: wheelNeedsPassword = false (no password required for sudo)
+      #    Risk: Compromised user account = instant root access
+      #    Fix: Set wheelNeedsPassword = true to require password for sudo
+      #
+      # 3. SSH CONFIGURATION (MEDIUM RISK)
+      #    Current: PasswordAuthentication = true, PermitEmptyPasswords = true
+      #    Risk: Allows SSH login without password
+      #    Mitigation: VM accessible only via host port forwarding (host:2222 -> guest:22)
+      #    Fix for production:
+      #      - Add SSH keys: openssh.authorizedKeys.keys = [ "ssh-rsa AAAA..." ];
+      #      - Disable password auth: PasswordAuthentication = false;
+      #      - Disable empty passwords: PermitEmptyPasswords = false;
+      #
+      # 4. FIREWALL (NOW ENABLED)
+      #    Current: Firewall enabled with ports 22, 3001, 9080 allowed
+      #    Status: SECURE - Only necessary ports are open
+      #    Customize: Add ports to networking.firewall.allowedTCPPorts as needed
+      #
+      # 5. AUTO-LOGIN (LOW RISK for VMs)
+      #    Current: User 'dennis' auto-logs in on console
+      #    Risk: Anyone with console access gets user shell
+      #    Note: Console is accessible only from host via QEMU
+      #
+      # PRODUCTION SECURITY CHECKLIST:
+      # [ ] Set strong passwords for all users (hashedPassword)
+      # [ ] Add SSH public keys (openssh.authorizedKeys.keys)
+      # [ ] Disable password SSH authentication (PasswordAuthentication = false)
+      # [ ] Enable sudo password requirement (wheelNeedsPassword = true)
+      # [ ] Review firewall rules (networking.firewall.allowedTCPPorts)
+      # [ ] Disable auto-login if needed (services.getty.autologinUser = null)
+      # [ ] Review user permissions and groups (extraGroups)
+      #
+      # For more information, see:
+      # - NixOS Security: https://nixos.org/manual/nixos/stable/#sec-security
+      # - SSH Hardening: https://nixos.wiki/wiki/SSH_public_key_authentication
+      # ==============================================================================
+
       # System configuration
       boot.loader.grub.enable = true;
       boot.loader.grub.device = "/dev/vda";
@@ -228,26 +302,41 @@ in
       # Networking
       networking.useDHCP = false;
       networking.interfaces.eth0.useDHCP = true;
-      networking.firewall.enable = false;
+
+      # Firewall configuration (enabled by default for security)
+      networking.firewall = {
+        enable = true;
+        allowedTCPPorts = [ 22 3001 9080 ];
+        # Add more ports as needed for your applications
+      };
 
       # User configuration
+      # SECURITY: Users have empty passwords for development convenience
+      # For production: Generate with 'mkpasswd -m sha-512' and replace hashedPassword
       users.users.dennis = {
         isNormalUser = true;
         extraGroups = [ "wheel" "networkmanager"${if enableAudio then " \"audio\"" else ""} ];
-        hashedPassword = "";
+        hashedPassword = "";  # INSECURE: Empty password - change for production
         shell = pkgs.fish;
-        openssh.authorizedKeys.keys = [ ];
+        openssh.authorizedKeys.keys = [
+          # Add your SSH public key here for key-based authentication:
+          # "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC... user@host"
+        ];
       };
 
       users.users.dvv = {
         isNormalUser = true;
         extraGroups = [ "wheel" "networkmanager"${if enableAudio then " \"audio\"" else ""} ];
-        hashedPassword = "";
+        hashedPassword = "";  # INSECURE: Empty password - change for production
         shell = pkgs.fish;
         openssh.authorizedKeys.keys = [ ];
       };
 
+      # SECURITY: Passwordless sudo enabled for development convenience
+      # For production: Set to true to require password for sudo
       security.sudo.wheelNeedsPassword = false;
+
+      # Auto-login for console access (only accessible from host via QEMU)
       services.getty.autologinUser = "dennis";
 
       programs.fish = {
@@ -263,7 +352,10 @@ in
         enable = true;
         settings = {
           PasswordAuthentication = true;
+          PermitEmptyPasswords = true;  # Required for empty password login
           PermitRootLogin = "no";
+          # For production, add your SSH key to users.users.<name>.openssh.authorizedKeys.keys
+          # and set: PasswordAuthentication = false; PermitEmptyPasswords = false;
         };
       };
 

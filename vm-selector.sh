@@ -255,6 +255,118 @@ validate_numeric() {
     return 0
 }
 
+# Check system resource capacity
+check_system_resources() {
+    local requested_ram="$1"
+    local requested_cpu="$2"
+    local requested_storage="$3"
+
+    # Check available RAM (convert to GB)
+    if command -v free >/dev/null 2>&1; then
+        local total_ram_kb=$(free -k | awk '/^Mem:/ {print $2}')
+        local total_ram_gb=$((total_ram_kb / 1024 / 1024))
+        local ram_threshold=$((total_ram_gb * 80 / 100))
+
+        if [[ "$requested_ram" -gt "$ram_threshold" ]]; then
+            echo ""
+            echo "Warning: Requested RAM (${requested_ram}GB) exceeds 80% of system RAM (${total_ram_gb}GB)"
+            echo "System RAM: ${total_ram_gb}GB | Threshold (80%): ${ram_threshold}GB | Requested: ${requested_ram}GB"
+            echo "This may cause system instability or swapping."
+            echo ""
+
+            # In interactive mode, ask for confirmation
+            if [[ "$INTERACTIVE" == "true" ]]; then
+                read -p "Continue anyway? [y/N]: " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    echo "Cancelled."
+                    exit 0
+                fi
+            else
+                echo "Proceeding anyway (non-interactive mode)"
+            fi
+        fi
+    fi
+
+    # Check available CPU cores
+    if command -v nproc >/dev/null 2>&1; then
+        local total_cpus=$(nproc)
+        local cpu_threshold=$((total_cpus * 80 / 100))
+        # Ensure threshold is at least 1
+        [[ "$cpu_threshold" -lt 1 ]] && cpu_threshold=1
+
+        if [[ "$requested_cpu" -gt "$cpu_threshold" ]]; then
+            echo ""
+            echo "Warning: Requested CPU cores ($requested_cpu) exceeds 80% of system CPUs ($total_cpus)"
+            echo "System CPUs: $total_cpus | Threshold (80%): $cpu_threshold | Requested: $requested_cpu"
+            echo "This may cause performance degradation on the host system."
+            echo ""
+
+            # In interactive mode, ask for confirmation
+            if [[ "$INTERACTIVE" == "true" ]]; then
+                read -p "Continue anyway? [y/N]: " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    echo "Cancelled."
+                    exit 0
+                fi
+            else
+                echo "Proceeding anyway (non-interactive mode)"
+            fi
+        fi
+    fi
+
+    # Check available disk space at target location
+    # Note: We don't know the exact location yet, so we'll check this later
+    # after VM_DIR is determined
+}
+
+# Check available disk space for VM storage
+check_disk_space() {
+    local vm_dir="$1"
+    local requested_storage_gb="$2"
+
+    if command -v df >/dev/null 2>&1; then
+        # Get available space in KB and convert to GB
+        local available_kb=$(df -k "$vm_dir" | awk 'NR==2 {print $4}')
+        local available_gb=$((available_kb / 1024 / 1024))
+
+        # Add 20% overhead for qcow2 metadata and safety margin
+        local required_gb=$((requested_storage_gb * 120 / 100))
+
+        if [[ "$available_gb" -lt "$required_gb" ]]; then
+            echo ""
+            echo "Error: Insufficient disk space in $vm_dir"
+            echo "Available: ${available_gb}GB | Required (with 20% overhead): ${required_gb}GB | VM storage: ${requested_storage_gb}GB"
+            echo ""
+            echo "Free up disk space or choose a smaller storage size."
+            return 1
+        fi
+
+        # Warn if using more than 80% of available space
+        local space_threshold=$((available_gb * 80 / 100))
+        if [[ "$requested_storage_gb" -gt "$space_threshold" ]]; then
+            echo ""
+            echo "Warning: Requested storage (${requested_storage_gb}GB) will use >80% of available disk space (${available_gb}GB)"
+            echo ""
+
+            # In interactive mode, ask for confirmation
+            if [[ "$INTERACTIVE" == "true" ]]; then
+                read -p "Continue anyway? [y/N]: " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    echo "Cancelled."
+                    return 1
+                fi
+            else
+                echo "Proceeding anyway (non-interactive mode)"
+            fi
+        fi
+    fi
+
+    return 0
+}
+
 # Interactive mode with fzf
 if [[ "$INTERACTIVE" == "true" ]]; then
     # Check if fzf is available
@@ -442,6 +554,9 @@ if [[ ${#SHARED_RO[@]} -gt 0 ]]; then
     shared_summary+=", RO shares: ${#SHARED_RO[@]}"
 fi
 
+# Check system resource capacity before building
+check_system_resources "$selected_ram" "$selected_cpu" "$selected_storage"
+
 # Run selected VM
 echo "Starting VM: ${selected_ram}GB RAM, ${selected_cpu} CPU cores, ${selected_storage}GB storage, overlay: $overlay_status, audio: $audio_status$shared_summary"
 
@@ -470,30 +585,148 @@ ro_list+="]"
 if [[ "$FLAKE_REF" == github:* ]] || [[ "$FLAKE_REF" == git+* && "$FLAKE_REF" != git+file://* ]]; then
     # For remote flakes, create VMs in a dedicated directory
     VM_DIR="$HOME/.local/share/ai-vms"
-    mkdir -p "$VM_DIR"
-    cd "$VM_DIR"
+
+    # Validate VM_DIR is not a symlink (TOCTOU protection)
+    if [[ -L "$VM_DIR" ]]; then
+        echo "Error: VM directory '$VM_DIR' is a symbolic link, which is not allowed for security reasons."
+        echo "Please remove the symlink and let this script create a real directory."
+        exit 1
+    fi
+
+    # Create directory with proper error handling
+    if ! mkdir -p "$VM_DIR" 2>/dev/null; then
+        echo "Error: Failed to create VM directory: $VM_DIR"
+        echo "Check permissions and ensure parent directory exists."
+        exit 1
+    fi
+
+    # Validate directory was created successfully and is writable
+    if [[ ! -d "$VM_DIR" ]]; then
+        echo "Error: Failed to create VM directory: $VM_DIR"
+        exit 1
+    fi
+
+    if [[ ! -w "$VM_DIR" ]]; then
+        echo "Error: VM directory is not writable: $VM_DIR"
+        echo "Current permissions: $(ls -ld "$VM_DIR" 2>/dev/null || echo "unknown")"
+        exit 1
+    fi
+
+    cd "$VM_DIR" || {
+        echo "Error: Failed to change to VM directory: $VM_DIR"
+        exit 1
+    }
     echo "VM files will be created in: $VM_DIR"
 else
     # For local flakes, use the project directory
     VM_DIR="$SCRIPT_DIR"
-    cd "$VM_DIR"
+
+    # Validate local directory exists and is writable
+    if [[ ! -d "$VM_DIR" ]]; then
+        echo "Error: Local flake directory does not exist: $VM_DIR"
+        exit 1
+    fi
+
+    if [[ ! -w "$VM_DIR" ]]; then
+        echo "Error: Local flake directory is not writable: $VM_DIR"
+        echo "Current permissions: $(ls -ld "$VM_DIR" 2>/dev/null || echo "unknown")"
+        exit 1
+    fi
+
+    cd "$VM_DIR" || {
+        echo "Error: Failed to change to directory: $VM_DIR"
+        exit 1
+    }
 fi
 
 # Build and run custom VM using nix build
+echo "Building VM with Nix..."
 
-nix build --impure --expr "
+if ! nix build --impure --expr "
     let
       flake = builtins.getFlake \"$FLAKE_REF\";
       pkgs = flake.inputs.nixpkgs.legacyPackages.\${builtins.currentSystem};
     in
       flake.lib.\${builtins.currentSystem}.makeCustomVM $selected_ram $selected_cpu $selected_storage $overlay_flag $rw_list $ro_list \"$VM_NAME\" $ENABLE_AUDIO
-"
+"; then
+    echo ""
+    echo "Error: Nix build failed!"
+    echo ""
+    echo "Possible causes:"
+    echo "  - Flake reference is invalid or inaccessible: $FLAKE_REF"
+    echo "  - Network issues (if using remote flake)"
+    echo "  - Insufficient disk space"
+    echo "  - Nix evaluation error in VM configuration"
+    echo ""
+    echo "Troubleshooting steps:"
+    echo "  1. Check flake reference: nix flake show \"$FLAKE_REF\""
+    echo "  2. Check disk space: df -h"
+    echo "  3. Try with verbose output: nix build --impure --show-trace --expr '...'"
+    echo ""
+    exit 1
+fi
+
+# Validate that the result symlink exists
+if [[ ! -L "result" ]]; then
+    echo "Error: Nix build succeeded but 'result' symlink was not created"
+    echo "This is unexpected. The build may have partially failed."
+    exit 1
+fi
+
+# Validate that result points to a valid directory
+if [[ ! -d "result" ]]; then
+    echo "Error: 'result' symlink exists but does not point to a valid directory"
+    echo "Target: $(readlink result 2>/dev/null || echo "unknown")"
+    exit 1
+fi
+
+# Validate that the VM binary exists
+VM_BINARY="result/bin/run-${VM_NAME}-vm"
+if [[ ! -f "$VM_BINARY" ]]; then
+    echo "Error: VM binary not found at expected location: $VM_BINARY"
+    echo "Available files in result/bin/:"
+    ls -la result/bin/ 2>/dev/null || echo "  (directory not accessible)"
+    exit 1
+fi
+
+# Validate that the VM binary is executable
+if [[ ! -x "$VM_BINARY" ]]; then
+    echo "Error: VM binary is not executable: $VM_BINARY"
+    echo "Permissions: $(ls -l "$VM_BINARY" 2>/dev/null || echo "unknown")"
+    exit 1
+fi
+
+echo "✓ VM built successfully"
 
 # Create reusable bash script
-echo "Creating startup script: start-${VM_NAME}.sh"
+STARTUP_SCRIPT="start-${VM_NAME}.sh"
+
+# Check if startup script already exists
+if [[ -f "$STARTUP_SCRIPT" ]]; then
+    echo ""
+    echo "Warning: Startup script '$STARTUP_SCRIPT' already exists in $VM_DIR"
+    echo "This will overwrite the existing script."
+    echo ""
+
+    # In interactive mode, ask for confirmation
+    if [[ "$INTERACTIVE" == "true" ]]; then
+        read -p "Overwrite existing startup script? [y/N]: " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Cancelled. VM was built but startup script was not updated."
+            echo "You can still run the VM with: ./result/bin/run-${VM_NAME}-vm"
+            exit 0
+        fi
+    else
+        # In non-interactive mode, show warning and proceed
+        echo "Proceeding with overwrite (use interactive mode to confirm)"
+    fi
+fi
+
+echo "Creating startup script: $STARTUP_SCRIPT"
 
 # Generate the VM startup script content
-cat > "start-${VM_NAME}.sh" << EOF
+cat > "$STARTUP_SCRIPT" << EOF
 #!/usr/bin/env bash
 
 # Generated VM startup script for: $VM_NAME
