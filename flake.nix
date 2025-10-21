@@ -169,6 +169,7 @@
           integration-test = import ./tests/integration { inherit pkgs; };
           nixos-rebuild-test = import ./tests/integration/nixos-rebuild-test.nix { inherit pkgs; };
           nested-vm-test = import ./tests/integration/nested-vm-test.nix { inherit pkgs; };
+          start-script-test = import ./tests/integration/start-script-test.nix { inherit pkgs; };
           unit-test = import ./tests/unit.nix { inherit pkgs; };
         };
       }
