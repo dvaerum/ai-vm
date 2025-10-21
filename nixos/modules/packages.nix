@@ -2,7 +2,8 @@
 
 let
   # Wrapper script for Claude Code that automatically copies auth from shared folder
-  claude-wrapper = pkgs.writeShellScriptBin "claude" ''
+  # Available as 'start-claude' command (normal 'claude' command runs without wrapper)
+  start-claude = pkgs.writeShellScriptBin "start-claude" ''
     # Check if Claude auth is shared from host
     if [[ -f /mnt/host-ro/.claude/.credentials.json ]]; then
       # Create .claude directory if it doesn't exist
@@ -21,8 +22,8 @@ let
       echo "✓ Claude auth copied from host shared folder"
     fi
 
-    # Run claude with the dangerously-skip-permissions flag
-    exec ${pkgs.claude-code}/bin/claude --dangerously-skip-permissions "$@"
+    # Run claude with flags to bypass all permissions in VM environment
+    exec ${pkgs.claude-code}/bin/claude --dangerously-skip-permissions --permission-mode bypassPermissions "$@"
   '';
 in
 {
@@ -59,8 +60,9 @@ in
     gnumake
 
     # Claude Code and AI tools
-    # Note: Using wrapper instead of direct claude-code package
-    # The wrapper automatically copies auth from shared folders and uses --dangerously-skip-permissions
-    claude-wrapper
+    # claude: Normal Claude Code command
+    # start-claude: Wrapper that copies auth from shared folders and uses permission bypass flags
+    claude-code
+    start-claude
   ];
 }
