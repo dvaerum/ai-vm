@@ -149,24 +149,39 @@ Detection determines where VM files are created and which flake reference to use
 ### Overlay Filesystem and Nested Virtualization
 All VMs now have a writable Nix store using overlay filesystem, enabling nested VM creation (building VMs inside VMs) without additional flags.
 
-**Implementation** (virtualisation-parameterized.nix:31-38):
+**Implementation** (virtualisation-parameterized.nix:31-38, 61-108):
 - `virtualisation.writableStore = true`: Always enabled for all VMs
 - `virtualisation.writableStoreUseTmpfs = useOverlay`: Controls persistence behavior
+- Host Nix store mounted at `/nix/.ro-store` via 9p (lines 63-69, 92-98)
+- Writable overlay created on top of read-only host store
+
+**Host Store Mounting** (virtualisation-parameterized.nix:63-98):
+- Host's `/nix/store` shared via 9p virtio filesystem as `nix-store` tag
+- Mounted at `/nix/.ro-store` with options: `trans=virtio`, `version=9p2000.L`, `msize=104857600`, `cache=loose`, `ro`
+- Provides binary cache functionality - packages from host are accessible without rebuilding
+- Critical for nested VM performance - avoids duplicating the entire Nix store
 
 **Behavior**:
 - **Without `--overlay` flag** (default): Disk-based overlay that persists across reboots
   - Nix store changes are saved to qcow2 disk
-  - Supports building nested VMs
+  - Supports building nested VMs efficiently (uses host store as binary cache)
   - Changes persist after reboot
   - Slightly slower first boot due to overlay setup
+  - Host store packages available instantly via `/nix/.ro-store`
 
 - **With `--overlay` flag**: Tmpfs-based overlay (in-memory)
   - Nix store changes stored in RAM
   - Clean state on each boot (changes lost on reboot)
   - Faster operation but uses more RAM
   - Still supports nested VMs during the session
+  - Host store still mounted for binary cache access
 
-**Nested VM Support**: All VMs can now create nested VMs (VMs inside VMs) because the Nix store is writable. Previously, only VMs with `--overlay` could do this, but now it's the default behavior with the added benefit of persistence when `--overlay` is not used.
+**Nested VM Support**: All VMs can now create nested VMs (VMs inside VMs) because:
+1. The Nix store is writable (via overlay filesystem)
+2. The host's Nix store is mounted and accessible (binary cache)
+3. Packages from the host don't need to be rebuilt - they're directly accessible
+
+Previously this was a known issue (documented at lines 152-158 in older versions). The solution mounts the host's Nix store as a read-only binary cache, NOT by adding overlay as the fix. This approach provides efficient nested virtualization without performance penalties.
 
 ### Audio Implementation
 Uses PulseAudio passthrough (not PipeWire). Creates audio group and adds users when `enableAudio = true`. VM name used for PulseAudio device naming.

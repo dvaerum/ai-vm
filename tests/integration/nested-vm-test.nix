@@ -3,10 +3,6 @@
 let
   # Import the flake to test
   flakeDir = ../../.;
-
-  # Import the VM building function from our flake
-  flake = builtins.getFlake (toString flakeDir);
-  system = pkgs.system;
 in
 
 pkgs.nixosTest {
