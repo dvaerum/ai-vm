@@ -639,6 +639,11 @@ else
     }
 fi
 
+# Check disk space availability at VM directory
+if ! check_disk_space "$VM_DIR" "$selected_storage"; then
+    exit 1
+fi
+
 # Build and run custom VM using nix build
 echo "Building VM with Nix..."
 
