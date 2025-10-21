@@ -1034,7 +1034,7 @@ EOF
     fi
 
     # Add VM execution command
-    cat >> "start-${VM_NAME}.sh" << 'EOF'
+    cat >> "start-${VM_NAME}.sh" << EOF
 
 echo ""
 echo "SSH access: ssh -p 2222 dennis@localhost"
@@ -1042,7 +1042,7 @@ echo "Press Ctrl+C to stop the VM"
 echo ""
 
 # Start the VM
-exec "$SCRIPT_DIR/result/bin/run-${VM_NAME}-vm"
+exec "\$SCRIPT_DIR/result/bin/run-${VM_NAME}-vm"
 EOF
 
 chmod +x "start-${VM_NAME}.sh"
