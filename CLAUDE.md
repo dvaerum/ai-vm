@@ -51,6 +51,13 @@ This is a NixOS-based VM builder for running Claude Code and AI development envi
 
 **Audio Passthrough**: PulseAudio passthrough when enabled via `--audio` flag, using QEMU's `-audiodev pa` with intel-hda emulation.
 
+**Claude Code Authentication**: The `claude` command is wrapped to automatically handle authentication from shared folders:
+- When `--share-claude-auth` flag is used, the wrapper copies `~/.claude/.credentials.json` from `/mnt/host-ro/.claude/` to `~/.claude/` in the VM
+- Automatically runs with `--dangerously-skip-permissions` flag to work in VM environment
+- Preserves command history and project settings by syncing the entire `.claude` directory
+- Implementation in `nixos/modules/packages.nix` as `claude-wrapper`
+- Works transparently - just run `claude` in the VM after using `--share-claude-auth` flag
+
 ## Common Development Commands
 
 ### Building and Running VMs
@@ -66,6 +73,7 @@ nix run .#default -- --ram 16 --cpu 8 --storage 100
 nix run .#default -- -r 8 -c 4 -s 50 --audio --overlay
 nix run .#default -- --name myvm --ram 16 --cpu 4 --storage 200
 nix run .#default -- --share-rw /path/to/dir --ram 8 --cpu 2 --storage 50
+nix run .#default -- --share-claude-auth --ram 8 --cpu 4 --storage 50  # Share Claude auth from host
 
 # Build VM manually
 nix build .#vm  # Default 8GB-2CPU-50GB
