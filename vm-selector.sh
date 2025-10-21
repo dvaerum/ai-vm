@@ -120,8 +120,8 @@ SENSITIVE_DIRS=(
 validate_path_security() {
     local path="$1"
 
-    # Check for null bytes (potential security issue)
-    if [[ "$path" == *$'\0'* ]]; then
+    # Check for null bytes using grep -z (matches null-terminated strings)
+    if printf '%s' "$path" | grep -qz $'[\x00]' 2>/dev/null; then
         echo "Error: Path contains null bytes - potential security issue"
         return 1
     fi
@@ -140,7 +140,8 @@ validate_path_security() {
     fi
 
     # Warn about unusual characters (but don't block)
-    if [[ "$path" =~ [^a-zA-Z0-9/_.\-\ ] ]]; then
+    # Note: In character class, - must be first, last, or escaped
+    if [[ "$path" =~ [^a-zA-Z0-9/_.\-[:space:]] ]]; then
         echo "Warning: Path contains unusual characters. This may cause issues."
         echo "Path: $path"
         read -p "Continue anyway? (y/N): " -n 1 -r
