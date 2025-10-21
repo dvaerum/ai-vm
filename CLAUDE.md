@@ -210,6 +210,72 @@ Validation limits in vm-selector.sh (lines 223-256):
 
 Values can be any positive integer within these limits, not just the preset options shown in fzf menus.
 
+## Security Considerations
+
+**IMPORTANT: This VM configuration prioritizes development convenience over security.**
+
+The default configuration is **NOT suitable for production environments or network-exposed systems** without hardening. See `SECURITY.md` for comprehensive security documentation.
+
+### Default Security Posture (Development-Focused)
+
+**Authentication & Access:**
+- Empty passwords for all users (`hashedPassword = ""`)
+- Passwordless sudo for wheel group (`wheelNeedsPassword = false`)
+- SSH permits empty passwords (`PermitEmptyPasswords = true`)
+- Auto-login enabled for console access
+- **Risk Level: HIGH** - Anyone with network access can gain root privileges
+
+**Network Security:**
+- Firewall enabled with minimal necessary ports (22, 3001, 9080)
+- Port forwarding: host:2222 → guest:22 (SSH)
+- **Mitigation: VMs accessible only via localhost port forwarding**
+
+**Shared Folders:**
+- 9p/virtio filesystem sharing between host and guest
+- Read-write shares can modify host files
+- Read-only shares use `ro` mount option
+- **Risk Level: MEDIUM** - Malicious code in VM can access shared host directories
+
+### Security Trade-offs for Development
+
+These security relaxations are intentional for development convenience:
+
+1. **No Authentication Barriers**: Rapid VM access without password prompts
+2. **Passwordless Sudo**: Seamless system configuration changes
+3. **Firewall with Essential Ports**: Allow development servers while maintaining basic protection
+4. **Writable /etc/nixos**: Easy configuration management and rebuilds
+5. **Auto-login**: Immediate console access (only from host QEMU)
+
+### When to Harden
+
+Apply security hardening (see `SECURITY.md`) when:
+- Exposing SSH to LAN or internet
+- Running untrusted code inside VMs
+- Sharing VMs with other users
+- Using VMs in less-trusted networks
+- Long-running production-like workloads
+
+### Quick Hardening Checklist
+
+For network-exposed or production use:
+- [ ] Generate and set strong user passwords (`mkpasswd -m sha-512`)
+- [ ] Add SSH public keys to `openssh.authorizedKeys.keys`
+- [ ] Disable password authentication (`PasswordAuthentication = false`)
+- [ ] Enable sudo password requirement (`wheelNeedsPassword = true`)
+- [ ] Review firewall rules (already enabled - verify allowed ports)
+- [ ] Disable auto-login (`services.getty.autologinUser = null`)
+- [ ] Minimize or remove shared folders
+- [ ] Enable audit logging
+- [ ] Review and remove unnecessary user accounts
+
+**Full hardening guide:** See `/home/dennis/ai-vm/SECURITY.md`
+
+### Security Documentation Files
+
+- **SECURITY.md**: Comprehensive security documentation with threat model, hardening guide, and best practices
+- **Generated VM Configuration**: Security comments in `/etc/nixos/configuration.nix` inside VMs
+- **Module Comments**: Security considerations documented in `nixos/modules/users.nix` and `networking.nix`
+
 ## Testing Strategy
 
 ### Automated Tests

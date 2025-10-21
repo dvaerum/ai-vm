@@ -91,6 +91,174 @@ DEFAULT_CPU="2"
 DEFAULT_STORAGE="50"
 DEFAULT_OVERLAY="false"
 
+# Security: Shared folder restrictions
+# These directories are completely blocked from being shared due to severe security risks
+BLOCKED_DIRS=(
+    "/"           # Root filesystem - sharing would expose entire system
+    "/boot"       # Boot files - tampering could prevent system boot
+    "/sys"        # Kernel/system interface - should never be modified
+    "/proc"       # Process/kernel information - runtime kernel interface
+    "/dev"        # Device files - direct hardware access
+)
+
+# These directories require explicit user confirmation due to security implications
+SENSITIVE_DIRS=(
+    "/root"       # Root user home - contains sensitive system administrator files
+    "/etc"        # System configuration - contains passwords, system settings
+    "/var"        # Variable data - includes logs, databases, system state
+    "/home"       # All user home directories - potentially exposes multiple users' data
+    "/usr"        # System binaries - modification could compromise system integrity
+    "/bin"        # Essential binaries - critical system commands
+    "/sbin"       # System binaries - administrative commands
+    "/lib"        # System libraries - tampering could break system
+    "/lib64"      # System libraries (64-bit)
+    "/opt"        # Optional software - may contain sensitive application data
+)
+
+# Security: Validate path doesn't contain characters that could break Nix expressions
+# or cause security issues. Allows: alphanumeric, /, _, -, ., space
+validate_path_security() {
+    local path="$1"
+
+    # Check for null bytes (potential security issue)
+    if [[ "$path" == *$'\0'* ]]; then
+        echo "Error: Path contains null bytes - potential security issue"
+        return 1
+    fi
+
+    # Check for newlines (could break Nix expressions)
+    if [[ "$path" == *$'\n'* ]]; then
+        echo "Error: Path contains newlines - not allowed"
+        return 1
+    fi
+
+    # Check for characters that could break Nix string literals: " $ ` \
+    if [[ "$path" =~ [\"\$\`\\] ]]; then
+        echo "Error: Path contains special characters that could break Nix expressions: \" \$ \` \\"
+        echo "Path: $path"
+        return 1
+    fi
+
+    # Warn about unusual characters (but don't block)
+    if [[ "$path" =~ [^a-zA-Z0-9/_.\-\ ] ]]; then
+        echo "Warning: Path contains unusual characters. This may cause issues."
+        echo "Path: $path"
+        read -p "Continue anyway? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            return 1
+        fi
+    fi
+
+    return 0
+}
+
+# Security: Check if path is a symlink to a sensitive directory
+# This prevents bypassing restrictions via symlinks
+check_symlink_target() {
+    local path="$1"
+
+    if [[ -L "$path" ]]; then
+        local target=$(readlink -f "$path")
+        echo "Warning: '$path' is a symlink to '$target'"
+
+        # Check if target is sensitive
+        for sensitive in "${BLOCKED_DIRS[@]}" "${SENSITIVE_DIRS[@]}"; do
+            if [[ "$target" == "$sensitive" ]] || [[ "$target" == "$sensitive"/* ]]; then
+                echo "Warning: Symlink target '$target' is in sensitive directory '$sensitive'"
+                return 1
+            fi
+        done
+    fi
+
+    return 0
+}
+
+# Security: Validate shared directory is not in restricted locations
+validate_shared_directory() {
+    local path="$1"
+    local share_type="$2"  # "read-write" or "read-only"
+
+    # First check path security (special characters, etc.)
+    if ! validate_path_security "$path"; then
+        return 1
+    fi
+
+    # Check if path is a symlink to sensitive location
+    if ! check_symlink_target "$path"; then
+        echo "Error: Cannot share symlinks to sensitive directories"
+        return 1
+    fi
+
+    # Get absolute path for comparison (should already be absolute from realpath)
+    local abs_path="$path"
+
+    # Check against completely blocked directories
+    for blocked in "${BLOCKED_DIRS[@]}"; do
+        if [[ "$abs_path" == "$blocked" ]]; then
+            echo "╔════════════════════════════════════════════════════════════════════════╗"
+            echo "║ SECURITY ERROR: Cannot share '$abs_path'                                "
+            echo "║                                                                          "
+            echo "║ This directory is critical to system operation and is blocked from      "
+            echo "║ being shared for security reasons.                                      "
+            echo "║                                                                          "
+            echo "║ Sharing this directory could:                                           "
+            echo "║   - Compromise system integrity                                         "
+            echo "║   - Allow unauthorized system access                                    "
+            echo "║   - Prevent system from booting                                         "
+            echo "║                                                                          "
+            echo "║ Safe alternatives:                                                      "
+            echo "║   - Share specific subdirectories (e.g., /home/user/projects)          "
+            echo "║   - Share /tmp for temporary file exchange                             "
+            echo "║   - Create a dedicated directory for VM sharing                        "
+            echo "╚════════════════════════════════════════════════════════════════════════╝"
+            return 1
+        fi
+    done
+
+    # Check against sensitive directories that require confirmation
+    for sensitive in "${SENSITIVE_DIRS[@]}"; do
+        if [[ "$abs_path" == "$sensitive" ]] || [[ "$abs_path" == "$sensitive"/* ]]; then
+            echo "╔════════════════════════════════════════════════════════════════════════╗"
+            echo "║ SECURITY WARNING: Sharing '$abs_path'                                   "
+            echo "║                                                                          "
+            echo "║ This directory contains sensitive system or user data.                  "
+            echo "║                                                                          "
+            if [[ "$share_type" == "read-write" ]]; then
+                echo "║ Sharing as READ-WRITE means the VM can:                                "
+                echo "║   - Modify system configurations                                       "
+                echo "║   - Delete or corrupt important files                                  "
+                echo "║   - Potentially compromise host system security                        "
+            else
+                echo "║ Sharing as READ-ONLY means the VM can:                                 "
+                echo "║   - Read sensitive configuration files                                 "
+                echo "║   - Access passwords or secrets (e.g., /etc/shadow, ssh keys)         "
+                echo "║   - View private user data                                             "
+            fi
+            echo "║                                                                          "
+            echo "║ Safer alternatives:                                                     "
+            echo "║   - Share only specific subdirectories you need                        "
+            echo "║   - Copy files to a dedicated sharing directory                        "
+            echo "║   - Use /tmp for temporary file exchange                               "
+            echo "╚════════════════════════════════════════════════════════════════════════╝"
+            echo ""
+            read -p "Are you absolutely sure you want to share this directory? (yes/NO): " -r confirmation
+
+            # Require explicit "yes" (case-sensitive for security)
+            if [[ "$confirmation" != "yes" ]]; then
+                echo "Cancelled. Directory not shared."
+                return 1
+            fi
+
+            echo "WARNING: Proceeding with sensitive directory sharing. Use at your own risk."
+            return 0
+        fi
+    done
+
+    # Path is safe
+    return 0
+}
+
 # Help function
 show_help() {
     cat << EOF
@@ -113,12 +281,28 @@ Options:
   -a, --audio           Enable audio passthrough (microphone input + audio output)
   -o, --overlay         Enable overlay filesystem (clean state each boot)
 
-  # Host Integration
+  # Host Integration (Security Notes Below)
   --share-rw PATH       Share host directory as read-write (mounted at /mnt/host-rw/PATH in VM)
   --share-ro PATH       Share host directory as read-only (mounted at /mnt/host-ro/PATH in VM)
 
   # Help
   -h, --help           Show this help
+
+Security Notes for Shared Folders:
+  WARNING: Shared folders can expose sensitive data or allow VMs to modify host files
+
+  Blocked directories (cannot be shared):
+    /, /boot, /sys, /proc, /dev
+
+  Sensitive directories (require confirmation):
+    /root, /etc, /var, /home, /usr, /bin, /sbin, /lib, /lib64, /opt
+
+  Safe sharing practices:
+    ✓ Share specific project directories (e.g., /home/user/projects/myproject)
+    ✓ Share /tmp for temporary file exchange
+    ✓ Create dedicated directories for VM sharing
+    ✗ Avoid sharing entire /home or system directories
+    ✗ Avoid read-write access to sensitive directories
 
 Examples:
   # Basic Usage
@@ -132,9 +316,12 @@ Examples:
   $0 --ram 16 --cpu 8 --storage 200 --audio  # VM with audio passthrough
   $0 -r 24 -c 6 -s 75 --overlay        # Custom configuration with overlay filesystem
 
-  # Host Integration
-  $0 --ram 8 --cpu 4 --storage 100 --share-rw /home/user/projects  # With shared folder
-  $0 --share-ro /etc --share-rw /tmp --ram 16 --cpu 8 --storage 200  # Multiple shares
+  # Host Integration (Safe Examples)
+  $0 --ram 8 --cpu 4 --storage 100 --share-rw /home/user/projects  # Safe: specific project directory
+  $0 --share-ro /home/user/docs --share-rw /tmp --ram 16 --cpu 8 --storage 200  # Safe: docs (RO) + temp (RW)
+
+  # Host Integration (Examples Requiring Confirmation)
+  $0 --share-ro /etc --ram 8 --cpu 4 --storage 100  # Requires confirmation: system config access
 
   # High-End Configuration
   $0 -r 128 -c 16 -s 500               # High-performance VM
@@ -180,7 +367,12 @@ while [[ $# -gt 0 ]]; do
                 echo "Error: Directory '$2' does not exist or is not accessible"
                 exit 1
             fi
-            SHARED_RW+=("$(realpath "$2")")
+            resolved_path="$(realpath "$2")"
+            if ! validate_shared_directory "$resolved_path" "read-write"; then
+                echo "Error: Security validation failed for shared directory"
+                exit 1
+            fi
+            SHARED_RW+=("$resolved_path")
             INTERACTIVE=false
             shift 2
             ;;
@@ -189,7 +381,12 @@ while [[ $# -gt 0 ]]; do
                 echo "Error: Directory '$2' does not exist or is not accessible"
                 exit 1
             fi
-            SHARED_RO+=("$(realpath "$2")")
+            resolved_path="$(realpath "$2")"
+            if ! validate_shared_directory "$resolved_path" "read-only"; then
+                echo "Error: Security validation failed for shared directory"
+                exit 1
+            fi
+            SHARED_RO+=("$resolved_path")
             INTERACTIVE=false
             shift 2
             ;;
@@ -487,8 +684,13 @@ if [[ "$INTERACTIVE" == "true" ]]; then
                 echo "Warning: Directory '$rw_path' does not exist or is not accessible. Skipping."
                 continue
             fi
-            SHARED_RW+=("$(realpath "$rw_path")")
-            echo "Added: $rw_path (read-write)"
+            resolved_rw_path="$(realpath "$rw_path")"
+            if ! validate_shared_directory "$resolved_rw_path" "read-write"; then
+                echo "Skipping directory due to security validation failure."
+                continue
+            fi
+            SHARED_RW+=("$resolved_rw_path")
+            echo "Added: $resolved_rw_path (read-write)"
         done
 
         echo "Read-only shared folders:"
@@ -501,8 +703,13 @@ if [[ "$INTERACTIVE" == "true" ]]; then
                 echo "Warning: Directory '$ro_path' does not exist or is not accessible. Skipping."
                 continue
             fi
-            SHARED_RO+=("$(realpath "$ro_path")")
-            echo "Added: $ro_path (read-only)"
+            resolved_ro_path="$(realpath "$ro_path")"
+            if ! validate_shared_directory "$resolved_ro_path" "read-only"; then
+                echo "Skipping directory due to security validation failure."
+                continue
+            fi
+            SHARED_RO+=("$resolved_ro_path")
+            echo "Added: $resolved_ro_path (read-only)"
         done
     fi
 else
