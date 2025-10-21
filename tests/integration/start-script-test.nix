@@ -99,24 +99,20 @@ pkgs.nixosTest {
     print("✓ Configuration variables are set correctly")
 
     # CRITICAL TEST: Check that VM binary path is correctly interpolated
-    # The script should have "run-test-start-vm-vm", not "run-''${VM_NAME}-vm"
-    assert "run-test-start-vm-vm" in script_content, (
-        f"VM binary path not correctly interpolated. "
-        f"Expected 'run-test-start-vm-vm' to be in the script. "
-        f"Check if the script has uninterpolated variables like '${{VM_NAME}}'"
-    )
-    print("✓ VM binary path is correctly interpolated (not using ''${VM_NAME})")
+    # The script should have "run-test-start-vm-vm", not "run-${VM_NAME}-vm"
+    assert "run-test-start-vm-vm" in script_content, \
+        "VM binary path not correctly interpolated. Expected 'run-test-start-vm-vm' to be in the script"
+    print("✓ VM binary path is correctly interpolated (not using variables)")
 
     # Check that there are no uninterpolated variables in the exec line
-    if "''${VM_NAME}" in script_content:
+    # Looking for the pattern that would indicate the variable wasn't expanded
+    vm_name_var = "$" + "{VM_NAME}"
+    if vm_name_var in script_content:
         # Find the exec line to provide better error message
         for line in script_content.split('\n'):
             if 'exec' in line and 'run-' in line:
-                raise AssertionError(
-                    f"Found uninterpolated ''${{VM_NAME}} variable in start script. "
-                    f"Problematic line: {line.strip()}"
-                )
-        raise AssertionError("Found uninterpolated ''${VM_NAME} variable in start script")
+                raise AssertionError(f"Found uninterpolated variable in start script: {line.strip()}")
+        raise AssertionError("Found uninterpolated VM_NAME variable in start script")
     print("✓ No uninterpolated variables found in start script")
 
     # Verify the VM binary exists
