@@ -279,12 +279,13 @@ Options:
   -n, --name NAME       Custom VM name (affects qcow2 file and script names, default: ai-vm)
 
   # Features & Capabilities
-  -a, --audio           Enable audio passthrough (microphone input + audio output)
-  -o, --overlay         Enable overlay filesystem (clean state each boot)
+  -a, --audio                Enable audio passthrough (microphone input + audio output)
+  -o, --overlay              Enable overlay filesystem (clean state each boot)
+  --share-claude-auth        Share Claude Code authentication (mounts ~/.claude read-only)
 
   # Host Integration (Security Notes Below)
-  --share-rw PATH       Share host directory as read-write (mounted at /mnt/host-rw/PATH in VM)
-  --share-ro PATH       Share host directory as read-only (mounted at /mnt/host-ro/PATH in VM)
+  --share-rw PATH            Share host directory as read-write (mounted at /mnt/host-rw/PATH in VM)
+  --share-ro PATH            Share host directory as read-only (mounted at /mnt/host-ro/PATH in VM)
 
   # Help
   -h, --help           Show this help
@@ -316,10 +317,12 @@ Examples:
   # With Features
   $0 --ram 16 --cpu 8 --storage 200 --audio  # VM with audio passthrough
   $0 -r 24 -c 6 -s 75 --overlay        # Custom configuration with overlay filesystem
+  $0 --ram 8 --cpu 4 --storage 50 --share-claude-auth  # Share Claude Code auth (no re-login needed)
 
   # Host Integration (Safe Examples)
   $0 --ram 8 --cpu 4 --storage 100 --share-rw /home/user/projects  # Safe: specific project directory
   $0 --share-ro /home/user/docs --share-rw /tmp --ram 16 --cpu 8 --storage 200  # Safe: docs (RO) + temp (RW)
+  $0 --share-claude-auth --share-rw /home/user/project --ram 8 --cpu 4 --storage 50  # Claude auth + project
 
   # Host Integration (Examples Requiring Confirmation)
   $0 --share-ro /etc --ram 8 --cpu 4 --storage 100  # Requires confirmation: system config access
@@ -341,6 +344,7 @@ SHARED_RW=()
 SHARED_RO=()
 VM_NAME="ai-vm"
 ENABLE_AUDIO="false"
+SHARE_CLAUDE_AUTH="false"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -403,6 +407,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -a|--audio)
             ENABLE_AUDIO="true"
+            shift
+            ;;
+        --share-claude-auth)
+            SHARE_CLAUDE_AUTH="true"
             shift
             ;;
         -h|--help)
@@ -664,6 +672,21 @@ if [[ "$INTERACTIVE" == "true" ]]; then
         USE_OVERLAY="false"
     fi
 
+    # Ask about Claude Code authentication sharing
+    if [[ -d "$HOME/.claude" ]]; then
+        claude_options=("Don't share Claude auth (will need to login in VM)" "Share Claude auth from host (no re-login)")
+        claude_choice=$(printf "%s\n" "${claude_options[@]}" | fzf --prompt="Claude Code auth: " --height=20%)
+        if [[ -z "$claude_choice" ]]; then
+            echo "Cancelled."
+            exit 0
+        fi
+
+        if [[ "$claude_choice" == *"Share Claude auth"* ]]; then
+            SHARE_CLAUDE_AUTH="true"
+            echo "Will share: $HOME/.claude (read-only)"
+        fi
+    fi
+
     # Ask about shared folders
     share_options=("No shared folders" "Add shared folders")
     share_choice=$(printf "%s\n" "${share_options[@]}" | fzf --prompt="Shared folders: " --height=20%)
@@ -751,6 +774,24 @@ if [[ "$ENABLE_AUDIO" == "true" ]]; then
     audio_status="enabled"
 else
     audio_status="disabled"
+fi
+
+# Handle Claude Code authentication sharing
+if [[ "$SHARE_CLAUDE_AUTH" == "true" ]]; then
+    CLAUDE_DIR="$HOME/.claude"
+    if [[ -d "$CLAUDE_DIR" ]]; then
+        echo "Sharing Claude Code authentication from: $CLAUDE_DIR"
+        SHARED_RO+=("$CLAUDE_DIR")
+    else
+        echo "Warning: --share-claude-auth specified but $CLAUDE_DIR not found"
+        echo "Claude Code may not be authenticated on this host."
+        read -p "Continue without Claude auth? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Cancelled."
+            exit 0
+        fi
+    fi
 fi
 
 # Generate shared folders summary
