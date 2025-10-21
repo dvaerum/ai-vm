@@ -76,6 +76,7 @@ if [[ "${BASH_SOURCE[0]}" == /nix/store/* ]]; then
     fi
 else
     # Direct script execution
+    CURRENT_DIR="$(pwd)"
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     FLAKE_REF="git+file://$SCRIPT_DIR"
 fi
@@ -867,17 +868,17 @@ if [[ "$FLAKE_REF" == github:* ]] || [[ "$FLAKE_REF" == git+* && "$FLAKE_REF" !=
     }
     echo "VM files will be created in: $VM_DIR"
 else
-    # For local flakes, use the project directory
-    VM_DIR="$SCRIPT_DIR"
+    # For local flakes, use the current working directory (where user ran the command)
+    VM_DIR="$CURRENT_DIR"
 
-    # Validate local directory exists and is writable
+    # Validate current directory exists and is writable
     if [[ ! -d "$VM_DIR" ]]; then
-        echo "Error: Local flake directory does not exist: $VM_DIR"
+        echo "Error: Current directory does not exist: $VM_DIR"
         exit 1
     fi
 
     if [[ ! -w "$VM_DIR" ]]; then
-        echo "Error: Local flake directory is not writable: $VM_DIR"
+        echo "Error: Current directory is not writable: $VM_DIR"
         echo "Current permissions: $(ls -ld "$VM_DIR" 2>/dev/null || echo "unknown")"
         exit 1
     fi
