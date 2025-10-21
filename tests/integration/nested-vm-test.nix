@@ -104,7 +104,7 @@ pkgs.nixosTest {
   outputs = { self, nixpkgs }:
     let
       system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.\${system};
+      pkgs = nixpkgs.legacyPackages.$${system};
     in
     {
       # Define a minimal VM configuration
@@ -138,7 +138,7 @@ pkgs.nixosTest {
       };
 
       # VM package (this is what we'll build)
-      packages.\${system}.vm = self.nixosConfigurations.nested-test.config.system.build.vm;
+      packages.$${system}.vm = self.nixosConfigurations.nested-test.config.system.build.vm;
     };
 }
 EOF
