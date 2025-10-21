@@ -2,7 +2,7 @@
 
 let
   # Wrapper script for Claude Code that automatically copies auth from shared folder
-  # Available as 'start-claude' command (normal 'claude' command runs without wrapper)
+  # This wrapper is aliased as 'claude' command when --share-claude-auth is used
   start-claude = pkgs.writeShellScriptBin "start-claude" ''
     # Check if Claude auth is shared from host
     if [[ -f /mnt/host-ro/.claude/.credentials.json ]]; then
@@ -13,13 +13,21 @@ let
       cp /mnt/host-ro/.claude/.credentials.json "$HOME/.claude/.credentials.json"
       chmod 600 "$HOME/.claude/.credentials.json"
 
-      # Copy other files if they exist (history, projects, etc.)
-      if [[ -d /mnt/host-ro/.claude ]]; then
-        # Copy everything except .credentials.json (already copied with correct permissions)
-        rsync -a --exclude='.credentials.json' /mnt/host-ro/.claude/ "$HOME/.claude/" 2>/dev/null || true
+      # Copy settings file from host if available (contains theme preference, tips history, etc.)
+      # This prevents first-time setup prompts (theme selection, etc.)
+      if [[ -f /mnt/host-ro/.claude/.settings.json ]]; then
+        cp /mnt/host-ro/.claude/.settings.json "$HOME/.claude.json"
+        chmod 644 "$HOME/.claude.json"
+        echo "✓ Claude settings copied from host"
       fi
 
-      echo "✓ Claude auth copied from host shared folder"
+      # Copy other files if they exist (history, projects, plugins config, etc.)
+      if [[ -d /mnt/host-ro/.claude ]]; then
+        # Copy everything except .credentials.json and .settings.json (already copied)
+        rsync -a --exclude='.credentials.json' --exclude='.settings.json' /mnt/host-ro/.claude/ "$HOME/.claude/" 2>/dev/null || true
+      fi
+
+      echo "✓ Claude auth and settings copied from host shared folder"
     fi
 
     # Run claude with flags to bypass all permissions in VM environment

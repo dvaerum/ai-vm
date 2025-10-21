@@ -780,8 +780,17 @@ fi
 # Handle Claude Code authentication sharing
 if [[ "$SHARE_CLAUDE_AUTH" == "true" ]]; then
     CLAUDE_DIR="$HOME/.claude"
+
     if [[ -d "$CLAUDE_DIR" ]]; then
         echo "Sharing Claude Code authentication from: $CLAUDE_DIR"
+
+        # Copy .claude.json settings file into .claude/ directory so it gets shared
+        # This allows the VM to access the host's Claude settings (theme, tips history, etc.)
+        if [[ -f "$HOME/.claude.json" ]]; then
+            cp "$HOME/.claude.json" "$CLAUDE_DIR/.settings.json"
+            echo "Copied host Claude settings for VM access"
+        fi
+
         SHARED_RO+=("$CLAUDE_DIR")
     else
         echo "Warning: --share-claude-auth specified but $CLAUDE_DIR not found"
