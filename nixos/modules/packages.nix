@@ -49,6 +49,7 @@ in
     unzip
     fish
     rsync
+    bat
 
     # Search and file tools
     fd
