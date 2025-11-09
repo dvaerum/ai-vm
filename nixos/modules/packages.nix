@@ -51,6 +51,7 @@ in
     rsync
     bat
     jq
+    file
 
     # Search and file tools
     fd
