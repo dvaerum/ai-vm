@@ -50,6 +50,7 @@ in
     fish
     rsync
     bat
+    jq
 
     # Search and file tools
     fd
