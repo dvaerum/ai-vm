@@ -50,10 +50,5 @@
       fish_add_path --prepend /run/wrappers/bin
       fish_add_path --append /run/current-system/sw/bin
     '';
-    shellAliases = {
-      # Alias 'claude' to 'start-claude' for convenient use when --share-claude-auth is used
-      # This ensures users can type 'claude' and get automatic auth sharing
-      claude = "start-claude";
-    };
   };
 }
