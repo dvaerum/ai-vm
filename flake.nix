@@ -89,8 +89,9 @@
                   { config, pkgs, ... }:
                   {
                     # Basic VM configuration
-                    boot.loader.grub.enable = true;
-                    boot.loader.grub.device = "/dev/vda";
+                    # Disable bootloader for VMs (QEMU boots directly)
+                    boot.loader.grub.enable = false;
+                    boot.loader.grub.device = "nodev";
 
                     # Enable flakes
                     nix.settings.experimental-features = [
