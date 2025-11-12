@@ -162,7 +162,32 @@ in
       # Fall through to normal nixos-rebuild
       exec ${pkgs.nixos-rebuild}/bin/nixos-rebuild "$@"
     '')
+
+    # Nix overlay cleanup script
+    (pkgs.writeScriptBin "nix-overlay-cleanup" (builtins.readFile ./nix-overlay-cleanup.sh))
   ];
+
+  # Systemd service for automatic Nix overlay cleanup
+  systemd.services.nix-overlay-gc = {
+    description = "Nix Overlay Garbage Collection";
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "/run/current-system/sw/bin/nix-overlay-cleanup --full";
+      StandardOutput = "journal";
+      StandardError = "journal";
+    };
+  };
+
+  # Timer to run the cleanup hourly
+  systemd.timers.nix-overlay-gc = {
+    description = "Nix Overlay Garbage Collection Timer";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnCalendar = "hourly";
+      OnBootSec = "30min";
+      Persistent = true;
+    };
+  };
 
   # Install VM configuration flake templates at /etc/nixos-template
   # These will be copied to /etc/nixos by the activation script
