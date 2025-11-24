@@ -164,7 +164,7 @@ in
     '')
 
     # Nix overlay cleanup script
-    (pkgs.writeScriptBin "nix-overlay-cleanup" (builtins.readFile ./nix-overlay-cleanup.sh))
+    (pkgs.writeShellScriptBin "nix-overlay-cleanup" (builtins.readFile ./nix-overlay-cleanup.sh))
   ];
 
   # Systemd service for automatic Nix overlay cleanup
