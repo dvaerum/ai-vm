@@ -52,6 +52,7 @@ in
     bat
     jq
     file
+    tmux
 
     # Search and file tools
     fd
