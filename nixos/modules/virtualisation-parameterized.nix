@@ -140,6 +140,13 @@ in
     support32Bit = true;
   };
 
+  nix.gc = {
+    automatic = true;
+    persistent = true;
+    randomizedDelaySec = "10min";
+    dates = "*-*-* 0/2:00:00";
+  };
+
   # Add audio group for users when audio is enabled
   users.groups = pkgs.lib.mkIf enableAudio {
     audio = {};
