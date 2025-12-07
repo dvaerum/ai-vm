@@ -11,13 +11,30 @@ if [[ "${BASH_SOURCE[0]}" == /nix/store/* ]]; then
     FLAKE_REF=""
     CURRENT_DIR="$(pwd)"
 
-    # Method 1: Check for path: prefix in process arguments (works for nix run path:...)
-    if ps -p $PPID -o args= 2>/dev/null | grep -q "path:"; then
-        # Extract the path from the parent command
-        PARENT_CMD=$(ps -p $PPID -o args= 2>/dev/null || echo "")
-        if [[ "$PARENT_CMD" =~ path:([^[:space:]]+) ]]; then
+    # Method 1: Use NIX_FLAKE_STORE_PATH set by our wrapper
+    # This is the nix store path containing the flake (with our current code)
+    if [[ -n "${NIX_FLAKE_STORE_PATH:-}" ]]; then
+        if [[ -f "${NIX_FLAKE_STORE_PATH}/flake.nix" ]]; then
+            FLAKE_REF="path:${NIX_FLAKE_STORE_PATH}"
+            SCRIPT_DIR="${NIX_FLAKE_STORE_PATH}"
+            echo "Using flake: $NIX_FLAKE_STORE_PATH"
+        fi
+    fi
+
+    # Method 1b: Try to find nix run in process tree (may not work due to exec)
+    if [[ -z "$FLAKE_REF" ]]; then
+        PARENT_CMD=""
+        for pid in $PPID $(ps -o ppid= -p $PPID 2>/dev/null) $(ps -o ppid= -p $(ps -o ppid= -p $PPID 2>/dev/null) 2>/dev/null); do
+            CMD=$(ps -p $pid -o args= 2>/dev/null || echo "")
+            if [[ "$CMD" == *"nix"* && "$CMD" == *"run"* ]]; then
+                PARENT_CMD="$CMD"
+                break
+            fi
+        done
+
+        # Try path: prefix first (works for nix run path:...)
+        if [[ "$PARENT_CMD" =~ path:([^[:space:]#]+) ]]; then
             EXTRACTED_PATH="${BASH_REMATCH[1]}"
-            # Convert relative path to absolute
             if [[ "$EXTRACTED_PATH" != /* ]]; then
                 EXTRACTED_PATH="$CURRENT_DIR/$EXTRACTED_PATH"
             fi
@@ -25,6 +42,14 @@ if [[ "${BASH_SOURCE[0]}" == /nix/store/* ]]; then
                 FLAKE_REF="git+file://$EXTRACTED_PATH"
                 SCRIPT_DIR="$EXTRACTED_PATH"
                 echo "Detected path reference: $EXTRACTED_PATH"
+            fi
+        # Try absolute path
+        elif [[ "$PARENT_CMD" =~ [[:space:]](/[^[:space:]#]+) ]]; then
+            EXTRACTED_PATH="${BASH_REMATCH[1]}"
+            if [[ -f "$EXTRACTED_PATH/flake.nix" ]]; then
+                FLAKE_REF="git+file://$EXTRACTED_PATH"
+                SCRIPT_DIR="$EXTRACTED_PATH"
+                echo "Detected absolute path: $EXTRACTED_PATH"
             fi
         fi
     fi
@@ -85,6 +110,7 @@ fi
 RAM_OPTIONS=("2" "4" "8" "16" "32")
 CPU_OPTIONS=("1" "2" "4" "8")
 STORAGE_OPTIONS=("20" "50" "100" "200")
+RESOLUTION_OPTIONS=("1280x720 (HD)" "1920x1080 (Full HD)" "2560x1440 (2K)" "3840x2160 (4K)")
 
 # Default values
 DEFAULT_RAM="8"
@@ -263,77 +289,97 @@ validate_shared_directory() {
 
 # Help function
 show_help() {
-    cat << EOF
+    cat << 'EOF'
 VM Selector - Launch Claude Code VMs with custom configurations
 
-Usage:
-  $0 [OPTIONS]                    # Interactive mode with fzf
-  $0 --ram RAM --cpu CPU --storage STORAGE [--overlay]  # Direct mode
+USAGE
+  nix run .#default [OPTIONS]           Interactive mode with fzf
+  nix run .#default -- --ram 8 --cpu 4  Direct mode with options
 
-Options:
-  # Hardware Configuration
-  -r, --ram RAM         RAM size in GB (any positive integer, defaults: 2, 4, 8, 16, 32)
-  -c, --cpu CPU         CPU cores (any positive integer, defaults: 1, 2, 4, 8)
-  -s, --storage STORAGE Storage size in GB (any positive integer, defaults: 20, 50, 100, 200)
+OPTIONS
+  Hardware:
+    -r, --ram SIZE        RAM in GB (default: 8)
+    -c, --cpu COUNT       CPU cores (default: 2)
+    -s, --storage SIZE    Disk in GB (default: 50)
 
-  # VM Identity
-  -n, --name NAME       Custom VM name (affects qcow2 file and script names, default: ai-vm)
+  VM Identity:
+    -n, --name NAME       VM name (default: ai-vm)
+                          Affects qcow2 filename and startup script
 
-  # Features & Capabilities
-  -a, --audio                Enable audio passthrough (microphone input + audio output)
-  -o, --overlay              Enable overlay filesystem (clean state each boot)
-  --share-claude-auth        Share Claude Code authentication (mounts ~/.claude read-only)
+  Features:
+    -d, --desktop         Enable KDE Plasma desktop (Wayland)
+    --resolution WxH      Display resolution (e.g., 1920x1080)
+                          Only applies when --desktop is enabled
+                          Presets: 1280x720, 1920x1080, 2560x1440, 3840x2160
+    -a, --audio           Enable audio passthrough
+    -o, --overlay         Ephemeral mode (clean state each boot)
+    --share-claude-auth   Share ~/.claude for authentication
 
-  # Host Integration (Security Notes Below)
-  --share-rw PATH            Share host directory as read-write (mounted at /mnt/host-rw/PATH in VM)
-  --share-ro PATH            Share host directory as read-only (mounted at /mnt/host-ro/PATH in VM)
+  Port Forwarding:
+    -p, --port HOST:GUEST Add port forward (can be repeated)
+    --ssh-port PORT       SSH port on host (default: 2222)
+    --no-default-ports    Don't include default dev ports (3001, 9080)
 
-  # Help
-  -h, --help           Show this help
+  Host Integration:
+    --share-rw PATH       Share directory read-write
+                          Mounted at /mnt/host-rw/<dirname> in VM
+    --share-ro PATH       Share directory read-only
+                          Mounted at /mnt/host-ro/<dirname> in VM
 
-Security Notes for Shared Folders:
-  WARNING: Shared folders can expose sensitive data or allow VMs to modify host files
+  Help:
+    -h, --help            Show this help
 
+SECURITY NOTES
   Blocked directories (cannot be shared):
-    /, /boot, /sys, /proc, /dev
+    /  /boot  /sys  /proc  /dev
 
   Sensitive directories (require confirmation):
-    /root, /etc, /var, /home, /usr, /bin, /sbin, /lib, /lib64, /opt
+    /root  /etc  /var  /home  /usr  /bin  /sbin  /lib  /opt
 
-  Safe sharing practices:
-    ✓ Share specific project directories (e.g., /home/user/projects/myproject)
-    ✓ Share /tmp for temporary file exchange
-    ✓ Create dedicated directories for VM sharing
+  Best practices:
+    ✓ Share specific project directories
+    ✓ Use /tmp for temporary file exchange
     ✗ Avoid sharing entire /home or system directories
-    ✗ Avoid read-write access to sensitive directories
 
-Examples:
-  # Basic Usage
-  $0                                    # Interactive mode with default options
-  $0 --ram 8 --cpu 4 --storage 100     # Basic custom configuration
+EXAMPLES
+  # Interactive mode
+  nix run .#default
 
-  # Named VMs
-  $0 --name "dev-env" --ram 16 --cpu 8 --storage 200  # Named VM (creates dev-env.qcow2, start-dev-env.sh)
+  # Basic configuration
+  nix run .#default -- --ram 8 --cpu 4 --storage 100
 
-  # With Features
-  $0 --ram 16 --cpu 8 --storage 200 --audio  # VM with audio passthrough
-  $0 -r 24 -c 6 -s 75 --overlay        # Custom configuration with overlay filesystem
-  $0 --ram 8 --cpu 4 --storage 50 --share-claude-auth  # Share Claude Code auth (no re-login needed)
+  # Desktop VM with audio
+  nix run .#default -- --ram 16 --cpu 8 --storage 200 --desktop --audio
 
-  # Host Integration (Safe Examples)
-  $0 --ram 8 --cpu 4 --storage 100 --share-rw /home/user/projects  # Safe: specific project directory
-  $0 --share-ro /home/user/docs --share-rw /tmp --ram 16 --cpu 8 --storage 200  # Safe: docs (RO) + temp (RW)
-  $0 --share-claude-auth --share-rw /home/user/project --ram 8 --cpu 4 --storage 50  # Claude auth + project
+  # Desktop VM with specific resolution
+  nix run .#default -- --ram 16 --cpu 8 --desktop --resolution 2560x1440
 
-  # Host Integration (Examples Requiring Confirmation)
-  $0 --share-ro /etc --ram 8 --cpu 4 --storage 100  # Requires confirmation: system config access
+  # Named VM
+  nix run .#default -- --name dev-vm --ram 16 --cpu 8
 
-  # High-End Configuration
-  $0 -r 128 -c 16 -s 500               # High-performance VM
+  # With shared folders
+  nix run .#default -- --share-rw ~/projects --share-claude-auth
 
-Default options available in fzf menu, but you can type any custom value
+  # Custom port forwarding
+  nix run .#default -- --ssh-port 2223 -p 8080:80 -p 5432:5432
+
+  # Minimal ports (SSH only, no default dev ports)
+  nix run .#default -- --no-default-ports
+
+  # High-end configuration
+  nix run .#default -- -r 64 -c 16 -s 500 --desktop
+
+  # Ephemeral VM (no persistent changes)
+  nix run .#default -- --ram 8 --cpu 4 --overlay
+
+NOTES
+  - In interactive mode, fzf lets you select or type custom values
+  - VM disk images are stored in the current directory (local flake)
+    or ~/.local/share/ai-vms/ (remote flake)
+  - Use start-<name>.sh to restart a previously built VM
 EOF
 }
+
 
 # Parse command line arguments
 INTERACTIVE=true
@@ -345,7 +391,15 @@ SHARED_RW=()
 SHARED_RO=()
 VM_NAME="ai-vm"
 ENABLE_AUDIO="false"
+ENABLE_DESKTOP="false"
 SHARE_CLAUDE_AUTH="false"
+RESOLUTION=""  # Empty means auto-detect/default
+
+# Port forwarding configuration
+# Default ports: SSH (2222→22), dev servers (3001→3001, 9080→9080)
+SSH_PORT="2222"
+PORT_MAPPINGS=()  # Array of "host:guest" strings
+USE_DEFAULT_PORTS="true"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -410,8 +464,45 @@ while [[ $# -gt 0 ]]; do
             ENABLE_AUDIO="true"
             shift
             ;;
+        -d|--desktop)
+            ENABLE_DESKTOP="true"
+            shift
+            ;;
+        --resolution)
+            # Validate resolution format (WIDTHxHEIGHT)
+            if [[ ! "$2" =~ ^[0-9]+x[0-9]+$ ]]; then
+                echo "Error: Resolution must be in format WIDTHxHEIGHT (e.g., 1920x1080)"
+                exit 1
+            fi
+            RESOLUTION="$2"
+            shift 2
+            ;;
         --share-claude-auth)
             SHARE_CLAUDE_AUTH="true"
+            shift
+            ;;
+        -p|--port)
+            # Validate port mapping format (host:guest)
+            if [[ ! "$2" =~ ^[0-9]+:[0-9]+$ ]]; then
+                echo "Error: Port mapping must be in format HOST:GUEST (e.g., 8080:80)"
+                exit 1
+            fi
+            PORT_MAPPINGS+=("$2")
+            INTERACTIVE=false
+            shift 2
+            ;;
+        --ssh-port)
+            # Validate SSH port
+            if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+                echo "Error: SSH port must be a number"
+                exit 1
+            fi
+            SSH_PORT="$2"
+            INTERACTIVE=false
+            shift 2
+            ;;
+        --no-default-ports)
+            USE_DEFAULT_PORTS="false"
             shift
             ;;
         -h|--help)
@@ -458,6 +549,68 @@ validate_numeric() {
             fi
             ;;
     esac
+
+    return 0
+}
+
+# Validate port number
+validate_port() {
+    local port="$1"
+    local port_type="$2"  # "host" or "guest"
+
+    # Check valid range (1-65535)
+    if [[ "$port" -lt 1 || "$port" -gt 65535 ]]; then
+        echo "Error: Port $port is out of valid range (1-65535)"
+        return 1
+    fi
+
+    # Warn about privileged ports on host
+    if [[ "$port_type" == "host" && "$port" -lt 1024 ]]; then
+        echo "Warning: Host port $port is a privileged port (<1024)"
+        echo "You may need root permissions to bind to this port."
+        if [[ "$INTERACTIVE" == "true" ]]; then
+            read -p "Continue anyway? [y/N]: " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                return 1
+            fi
+        fi
+    fi
+
+    return 0
+}
+
+# Check if a host port is already in use
+check_port_in_use() {
+    local port="$1"
+
+    if command -v ss >/dev/null 2>&1; then
+        if ss -tuln | grep -q ":${port} "; then
+            echo "Warning: Host port $port appears to be in use"
+            if [[ "$INTERACTIVE" == "true" ]]; then
+                read -p "Continue anyway? [y/N]: " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    return 1
+                fi
+            else
+                echo "Proceeding anyway (non-interactive mode)"
+            fi
+        fi
+    elif command -v netstat >/dev/null 2>&1; then
+        if netstat -tuln | grep -q ":${port} "; then
+            echo "Warning: Host port $port appears to be in use"
+            if [[ "$INTERACTIVE" == "true" ]]; then
+                read -p "Continue anyway? [y/N]: " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    return 1
+                fi
+            else
+                echo "Proceeding anyway (non-interactive mode)"
+            fi
+        fi
+    fi
 
     return 0
 }
@@ -645,6 +798,54 @@ if [[ "$INTERACTIVE" == "true" ]]; then
         done
     fi
 
+    # Ask about display mode (terminal vs desktop)
+    display_options=("Terminal mode (headless, SSH access)" "Desktop mode (KDE Plasma graphical environment)")
+    display_choice=$(printf "%s\n" "${display_options[@]}" | fzf --prompt="Display mode: " --height=20%)
+    if [[ -z "$display_choice" ]]; then
+        echo "Cancelled."
+        exit 0
+    fi
+
+    if [[ "$display_choice" == *"Desktop mode"* ]]; then
+        ENABLE_DESKTOP="true"
+
+        # Ask about resolution for desktop mode
+        resolution_options=("Auto (default)" "${RESOLUTION_OPTIONS[@]}" "Custom resolution")
+        resolution_choice=$(printf "%s\n" "${resolution_options[@]}" | fzf --prompt="Display resolution: " --height=20%)
+        if [[ -z "$resolution_choice" ]]; then
+            echo "Cancelled."
+            exit 0
+        fi
+
+        case "$resolution_choice" in
+            "Auto (default)")
+                RESOLUTION=""
+                ;;
+            "Custom resolution")
+                while true; do
+                    read -p "Enter resolution (WIDTHxHEIGHT, e.g., 1920x1080): " custom_res
+                    if [[ -z "$custom_res" ]]; then
+                        echo "Using auto resolution."
+                        RESOLUTION=""
+                        break
+                    fi
+                    if [[ ! "$custom_res" =~ ^[0-9]+x[0-9]+$ ]]; then
+                        echo "Invalid format. Use WIDTHxHEIGHT (e.g., 1920x1080)"
+                        continue
+                    fi
+                    RESOLUTION="$custom_res"
+                    break
+                done
+                ;;
+            *)
+                # Extract just the resolution part (e.g., "1920x1080" from "1920x1080 (Full HD)")
+                RESOLUTION="${resolution_choice%% *}"
+                ;;
+        esac
+    else
+        ENABLE_DESKTOP="false"
+    fi
+
     # Ask about audio passthrough
     audio_options=("No audio passthrough" "Enable audio passthrough (microphone + speakers)")
     audio_choice=$(printf "%s\n" "${audio_options[@]}" | fzf --prompt="Audio: " --height=20%)
@@ -686,6 +887,53 @@ if [[ "$INTERACTIVE" == "true" ]]; then
             SHARE_CLAUDE_AUTH="true"
             echo "Will share: $HOME/.claude (read-only)"
         fi
+    fi
+
+    # Ask about port configuration
+    port_options=("Use default ports (SSH:2222, 3001, 9080)" "Customize ports")
+    port_choice=$(printf "%s\n" "${port_options[@]}" | fzf --prompt="Port forwarding: " --height=20%)
+    if [[ -z "$port_choice" ]]; then
+        echo "Cancelled."
+        exit 0
+    fi
+
+    if [[ "$port_choice" == "Customize ports" ]]; then
+        echo ""
+        echo "Port forwarding configuration:"
+        echo "Default ports: SSH (2222→22), dev servers (3001→3001, 9080→9080)"
+        echo ""
+
+        # Ask about SSH port
+        read -p "SSH host port [2222]: " custom_ssh_port
+        if [[ -n "$custom_ssh_port" ]]; then
+            if [[ ! "$custom_ssh_port" =~ ^[0-9]+$ ]]; then
+                echo "Invalid port number. Using default 2222."
+            else
+                SSH_PORT="$custom_ssh_port"
+            fi
+        fi
+
+        # Ask about default dev ports
+        read -p "Include default dev ports 3001 and 9080? [Y/n]: " include_defaults
+        if [[ "$include_defaults" =~ ^[Nn]$ ]]; then
+            USE_DEFAULT_PORTS="false"
+        fi
+
+        # Ask for additional ports
+        echo ""
+        echo "Add custom port mappings (format: HOST:GUEST, e.g., 8080:80)"
+        while true; do
+            read -p "Add port mapping (or press Enter to finish): " port_mapping
+            if [[ -z "$port_mapping" ]]; then
+                break
+            fi
+            if [[ ! "$port_mapping" =~ ^[0-9]+:[0-9]+$ ]]; then
+                echo "Invalid format. Use HOST:GUEST (e.g., 8080:80)"
+                continue
+            fi
+            PORT_MAPPINGS+=("$port_mapping")
+            echo "Added: $port_mapping"
+        done
     fi
 
     # Ask about shared folders
@@ -777,6 +1025,17 @@ else
     audio_status="disabled"
 fi
 
+# Set desktop status for display
+if [[ "$ENABLE_DESKTOP" == "true" ]]; then
+    if [[ -n "$RESOLUTION" ]]; then
+        desktop_status="KDE Plasma ($RESOLUTION)"
+    else
+        desktop_status="KDE Plasma (auto)"
+    fi
+else
+    desktop_status="terminal"
+fi
+
 # Handle Claude Code authentication sharing
 if [[ "$SHARE_CLAUDE_AUTH" == "true" ]]; then
     CLAUDE_DIR="$HOME/.claude"
@@ -813,11 +1072,58 @@ if [[ ${#SHARED_RO[@]} -gt 0 ]]; then
     shared_summary+=", RO shares: ${#SHARED_RO[@]}"
 fi
 
+# Build final port mappings list
+FINAL_PORTS=()
+
+# Always include SSH
+FINAL_PORTS+=("${SSH_PORT}:22")
+
+# Add default dev ports unless disabled
+if [[ "$USE_DEFAULT_PORTS" == "true" ]]; then
+    FINAL_PORTS+=("3001:3001")
+    FINAL_PORTS+=("9080:9080")
+fi
+
+# Add custom port mappings
+for mapping in "${PORT_MAPPINGS[@]}"; do
+    FINAL_PORTS+=("$mapping")
+done
+
+# Validate all ports
+echo "Validating port configuration..."
+for mapping in "${FINAL_PORTS[@]}"; do
+    host_port="${mapping%%:*}"
+    guest_port="${mapping##*:}"
+
+    if ! validate_port "$host_port" "host"; then
+        exit 1
+    fi
+    if ! validate_port "$guest_port" "guest"; then
+        exit 1
+    fi
+    if ! check_port_in_use "$host_port"; then
+        exit 1
+    fi
+done
+
+# Generate port summary for display
+port_summary=""
+for mapping in "${FINAL_PORTS[@]}"; do
+    host_port="${mapping%%:*}"
+    guest_port="${mapping##*:}"
+    if [[ -n "$port_summary" ]]; then
+        port_summary+=", "
+    fi
+    port_summary+="${host_port}→${guest_port}"
+done
+
 # Check system resource capacity before building
 check_system_resources "$selected_ram" "$selected_cpu" "$selected_storage"
 
 # Run selected VM
-echo "Starting VM: ${selected_ram}GB RAM, ${selected_cpu} CPU cores, ${selected_storage}GB storage, overlay: $overlay_status, audio: $audio_status$shared_summary"
+echo "Starting VM: ${selected_ram}GB RAM, ${selected_cpu} CPU cores, ${selected_storage}GB storage"
+echo "Display: $desktop_status, Audio: $audio_status, Overlay: $overlay_status$shared_summary"
+echo "Ports: $port_summary"
 
 # Always build custom VM on-demand
 echo "Building VM configuration..."
@@ -840,8 +1146,20 @@ for path in "${SHARED_RO[@]}"; do
 done
 ro_list+="]"
 
+# Convert port mappings to Nix list of attrsets format
+# Format: [ { host = 2222; guest = 22; } { host = 3001; guest = 3001; } ]
+ports_list="["
+for mapping in "${FINAL_PORTS[@]}"; do
+    host_port="${mapping%%:*}"
+    guest_port="${mapping##*:}"
+    ports_list+="{ host = $host_port; guest = $guest_port; } "
+done
+ports_list+="]"
+
 # Create a dedicated VM directory for better organization
-if [[ "$FLAKE_REF" == github:* ]] || [[ "$FLAKE_REF" == git+* && "$FLAKE_REF" != git+file://* ]]; then
+# Remote flakes (github:) go to ~/.local/share/ai-vms
+# Local flakes (path:, git+file://) use current directory
+if [[ "$FLAKE_REF" == github:* ]]; then
     # For remote flakes, create VMs in a dedicated directory
     VM_DIR="$HOME/.local/share/ai-vms"
 
@@ -906,12 +1224,19 @@ fi
 # Build and run custom VM using nix build
 echo "Building VM with Nix..."
 
+# Format resolution for Nix (null if empty, string otherwise)
+if [[ -n "$RESOLUTION" ]]; then
+    resolution_nix="\"$RESOLUTION\""
+else
+    resolution_nix="null"
+fi
+
 if ! nix build --impure --expr "
     let
       flake = builtins.getFlake \"$FLAKE_REF\";
       pkgs = flake.inputs.nixpkgs.legacyPackages.\${builtins.currentSystem};
     in
-      flake.lib.\${builtins.currentSystem}.makeCustomVM $selected_ram $selected_cpu $selected_storage $overlay_flag $rw_list $ro_list \"$VM_NAME\" $ENABLE_AUDIO
+      flake.lib.\${builtins.currentSystem}.makeCustomVM $selected_ram $selected_cpu $selected_storage $overlay_flag $rw_list $ro_list \"$VM_NAME\" $ENABLE_AUDIO $ENABLE_DESKTOP $ports_list $resolution_nix
 "; then
     echo ""
     echo "Error: Nix build failed!"
@@ -995,7 +1320,8 @@ cat > "$STARTUP_SCRIPT" << EOF
 
 # Generated VM startup script for: $VM_NAME
 # Configuration: ${selected_ram}GB RAM, ${selected_cpu} CPU cores, ${selected_storage}GB storage
-# Overlay: $overlay_status, Audio: $audio_status$shared_summary
+# Display: $desktop_status, Audio: $audio_status, Overlay: $overlay_status$shared_summary
+# Ports: $port_summary
 # Generated on: $(date)
 # VM Directory: $VM_DIR
 
@@ -1020,11 +1346,14 @@ CPU_CORES=$selected_cpu
 STORAGE_SIZE=$selected_storage
 OVERLAY=$overlay_flag
 AUDIO=$ENABLE_AUDIO
+DESKTOP=$ENABLE_DESKTOP
 
 echo "Starting VM: \$VM_NAME"
 echo "Configuration: \${RAM_SIZE}GB RAM, \${CPU_CORES} CPU cores, \${STORAGE_SIZE}GB storage"
-echo "Overlay filesystem: $overlay_status"
+echo "Display: $desktop_status"
 echo "Audio passthrough: $audio_status"
+echo "Overlay filesystem: $overlay_status"
+echo "Port forwarding: $port_summary"
 EOF
 
     # Add shared folder information to script
@@ -1046,7 +1375,7 @@ EOF
     cat >> "start-${VM_NAME}.sh" << EOF
 
 echo ""
-echo "SSH access: ssh -p 2222 dennis@localhost"
+echo "SSH access: ssh -p $SSH_PORT dennis@localhost"
 echo "Press Ctrl+C to stop the VM"
 echo ""
 

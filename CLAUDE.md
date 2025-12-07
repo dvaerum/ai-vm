@@ -21,10 +21,11 @@ NixOS-based VM builder for running Claude Code and AI development environments. 
    - Extensive security validation for shared folders
 
 3. **nixos/modules/**: NixOS configuration modules
-   - `virtualisation-parameterized.nix`: VM parameters, overlay filesystem, shared folders
+   - `virtualisation-parameterized.nix`: VM/QEMU settings, templates, activation script (parameterized)
+   - `configuration.nix`: Pure base config (firewall, nix gc, overlay cleanup) - no parameters
    - `packages.nix`: Claude Code and development tools (Node.js, Python, Rust, Go)
    - `users.nix`: User setup (dennis/dvv, passwordless sudo, auto-login)
-   - `networking.nix`: SSH and firewall config
+   - `networking.nix`: SSH config
 
 ### Key Features
 
@@ -53,6 +54,12 @@ nix build .#vm  # Default 8GB-2CPU-50GB
 ./result/bin/run-ai-vm-vm
 ```
 
+### Development Shell
+
+```bash
+nix develop  # Provides nixos-rebuild, qemu, fzf
+```
+
 ### Testing
 
 ```bash
@@ -66,8 +73,9 @@ nix build .#checks.x86_64-linux.nested-vm-test
 nix build .#checks.x86_64-linux.start-script-test
 nix build .#checks.x86_64-linux.unit-test
 
-# Manual tests (run inside VM)
-/home/dennis/Projects/nixos-configs/ai-vm/tests/manual-nixos-rebuild-test.sh
+# Manual tests (run inside VM after sharing project folder)
+./tests/manual-nixos-rebuild-test.sh
+./tests/manual-nested-vm-test.sh
 ```
 
 ### VM Usage
@@ -77,9 +85,9 @@ nix build .#checks.x86_64-linux.unit-test
 ssh -p 2222 dennis@localhost  # or dvv@localhost
 
 # Inside VM - rebuild after configuration changes
-rebuild                      # Convenience command with git commit
-sudo nixos-rebuild switch    # Direct rebuild (auto-detects flakes)
-nix flake update /etc/nixos  # Update dependencies
+rebuild                              # Convenience command
+sudo nixos-rebuild switch            # Direct rebuild
+nix flake update path:/etc/nixos     # Update nixpkgs
 
 # Claude Code (when using --share-claude-auth)
 start-claude  # Copies auth from host and launches Claude with bypass permissions
@@ -93,11 +101,27 @@ start-claude  # Copies auth from host and launches Claude with bypass permission
 - Validates system resources (warns if >80% RAM/CPU usage)
 - Checks available disk space with 20% overhead margin
 
-### In-VM Configuration
-- `/etc/nixos` writable directory with flake config (auto-initialized with git)
-- Files auto-copied from templates: `flake.nix`, `configuration.nix`, `hardware-configuration.nix`, `rebuild`, `README.md`
-- `nixos-rebuild` wrapper auto-detects flakes and adds `--flake /etc/nixos#${vmName}`
-- `rebuild` command: handles git operations and provides helpful error messages
+### In-VM Configuration (`/etc/nixos`)
+Created on first boot only. User can edit any file. Delete folder and reboot to reset.
+
+```
+/etc/nixos/
+├── flake.nix                 # Flake definition
+├── vm-info.nix               # Baked-in VM params (hostname, audio, etc.)
+├── hardware-configuration.nix
+├── modules/                  # Actual module files from host
+│   ├── configuration.nix     # Base config (firewall, gc)
+│   ├── users.nix
+│   ├── packages.nix
+│   └── networking.nix
+├── rebuild
+└── README.md
+```
+
+- **First boot**: `/etc/nixos` created from templates
+- **User edits**: Any file can be modified, changes persist across reboots
+- **Reset**: `sudo rm -rf /etc/nixos && sudo reboot`
+- Uses `path:/etc/nixos` flake reference (no git required)
 
 ### Port Forwarding
 - SSH: Host 2222 → Guest 22
@@ -131,7 +155,7 @@ start-claude  # Copies auth from host and launches Claude with bypass permission
 
 ## Configuration
 
-- **Add packages**: Edit `nixos/modules/packages.nix` or `/etc/nixos/configuration.nix`, then run `rebuild`
+- **Add packages**: Edit `nixos/modules/packages.nix` (host) or `/etc/nixos/modules/packages.nix` (VM), then `rebuild`
 - **Port forwarding**: Modify `virtualisation.forwardPorts` in `virtualisation-parameterized.nix`
 - **Hardware limits**: RAM max 1024GB, CPU max 128, Storage max 10TB
 - **VM naming**: Use `--name` flag to create distinct VMs with separate disk images
@@ -149,10 +173,15 @@ start-claude  # Copies auth from host and launches Claude with bypass permission
 
 ## Testing Structure
 
-- **Integration tests**:
+- **Integration tests** (`tests/integration/`):
   - `comprehensive-vm-selector-test.py`: Full vm-selector.sh validation
   - `nixos-rebuild-test.nix`: Tests rebuild functionality in VM
   - `nested-vm-test.nix`: Validates nested VM creation
   - `start-script-test.nix`: Tests generated startup scripts
+  - `vm-nixos-config-test.py`: VM NixOS configuration validation
 - **Unit tests**: `tests/unit.nix` - Nix expression evaluations
-- **Manual tests**: Scripts for interactive testing inside VMs
+- **Manual tests**: `tests/manual-*.sh` - Scripts for interactive testing inside VMs
+
+## Utility Scripts
+
+- `nixos/modules/nix-overlay-cleanup.sh`: Cleans up the overlay filesystem when nix store gets too large inside VMs

@@ -1,98 +1,160 @@
-{ config, pkgs, memorySize ? 8192, cores ? 2, diskSize ? 51200, useOverlay ? false, sharedFoldersRW ? [], sharedFoldersRO ? [], vmName ? "ai-vm", enableAudio ? false, ... }:
+# VM/QEMU-specific configuration for AI VM
+# This module contains all VM-specific settings: virtualisation, templates, activation.
+
+{ config, pkgs, lib, memorySize ? 8192, cores ? 2, diskSize ? 51200, useOverlay ? false, sharedFoldersRW ? [], sharedFoldersRO ? [], vmName ? "ai-vm", enableAudio ? false, enableDesktop ? false, portMappings ? [{ host = 2222; guest = 22; }], resolution ? null, nixpkgsRev ? "unknown", nixpkgsNarHash ? "unknown", ... }:
 
 let
   # Generate short mount tag from path (max 31 chars for QEMU)
-  # Shared function used by both sharedDirectories and fileSystems
   mkMountTag = prefix: path:
     let
-      # Get basename and hash for uniqueness
       basename = builtins.baseNameOf path;
       pathHash = builtins.substring 0 8 (builtins.hashString "sha256" path);
-      # Limit total length: prefix(3) + hash(8) + dash(1) + basename(max 19) = 31
       maxBasename = 19;
       shortBasename = if builtins.stringLength basename > maxBasename
                      then builtins.substring 0 maxBasename basename
                      else basename;
     in "${prefix}${pathHash}-${shortBasename}";
+
+  # Format port mappings for display (e.g., "2222→22, 3001→3001")
+  portMappingsStr = builtins.concatStringsSep ", " (builtins.map (p: "${toString p.host}→${toString p.guest}") portMappings);
+
+  # Get list of guest ports for firewall
+  guestPorts = builtins.map (p: p.guest) portMappings;
+  guestPortsStr = builtins.concatStringsSep " " (builtins.map toString guestPorts);
+
+  # Parse resolution string (e.g., "1920x1080") into width and height
+  parseResolution = res:
+    if res == null then null
+    else
+      let
+        parts = builtins.match "([0-9]+)x([0-9]+)" res;
+      in
+      if parts == null then null
+      else {
+        width = builtins.elemAt parts 0;
+        height = builtins.elemAt parts 1;
+      };
+
+  parsedResolution = parseResolution resolution;
+  hasResolution = parsedResolution != null;
+  resolutionStr = if hasResolution then resolution else "auto";
 in
 {
-  # Set system hostname to VM name
-  networking.hostName = pkgs.lib.mkForce vmName;
+  # ==========================================================================
+  # VM IDENTITY & PARAMETERIZED SETTINGS
+  # ==========================================================================
 
-  # Firewall configuration
-  # SECURITY: Firewall is enabled by default with only necessary ports allowed
-  # The VM is accessible via port forwarding from the host:
-  #   - Host:2222 -> Guest:22 (SSH)
-  #   - Host:3001 -> Guest:3001 (Development server)
-  #   - Host:9080 -> Guest:9080 (Development server)
-  #
-  # Allowed ports within the VM network:
-  #   - 22: SSH (required for remote access)
-  #   - 3001, 9080: Development servers (common for web development)
-  #
-  # To open additional ports, edit /etc/nixos/configuration.nix and add:
-  #   networking.firewall.allowedTCPPorts = [ 22 3001 9080 YOUR_PORT ];
-  #
-  # To disable firewall (NOT recommended for production):
-  #   networking.firewall.enable = false;
-  #
-  networking.firewall = {
-    enable = true;
-    allowedTCPPorts = [ 22 3001 9080 ];
-    # Uncomment to allow specific UDP ports:
-    # allowedUDPPorts = [ ];
+  # Set system hostname to VM name
+  networking.hostName = lib.mkForce vmName;
+
+  # Audio system configuration (enabled when audio passthrough is requested)
+  services.pulseaudio = {
+    enable = enableAudio;
+    systemWide = false;
+    support32Bit = true;
   };
 
-  # VM-specific settings with parameterized size
+  # Add audio group for users when audio is enabled
+  users.groups = lib.mkIf enableAudio {
+    audio = {};
+  };
+
+  users.users.dennis.extraGroups = lib.mkIf enableAudio [ "wheel" "networkmanager" "audio" ];
+  users.users.dvv.extraGroups = lib.mkIf enableAudio [ "wheel" "networkmanager" "audio" ];
+
+  # Desktop environment (KDE Plasma with Wayland)
+  services.displayManager.sddm.enable = enableDesktop;
+  services.displayManager.sddm.wayland.enable = enableDesktop;
+  services.desktopManager.plasma6.enable = enableDesktop;
+
+  # Set virtual console resolution via kernel parameters (for early boot and TTY)
+  boot.kernelParams = lib.optionals (enableDesktop && hasResolution) [
+    "video=${resolution}"
+  ];
+
+  # Firewall: open guest ports based on port mappings
+  networking.firewall.allowedTCPPorts = builtins.map (p: p.guest) portMappings;
+
+  # System packages: nixos-rebuild wrapper + resolution tools if desktop enabled
+  environment.systemPackages = [
+    (pkgs.writeShellScriptBin "nixos-rebuild" ''
+      # Wrapper for nixos-rebuild that automatically uses flakes
+      if [ -f /etc/nixos/flake.nix ]; then
+        if ! echo "$@" | grep -q -- "--flake"; then
+          exec ${pkgs.nixos-rebuild}/bin/nixos-rebuild "$@" --flake "path:/etc/nixos#${vmName}"
+        fi
+      fi
+      exec ${pkgs.nixos-rebuild}/bin/nixos-rebuild "$@"
+    '')
+  ]
+  # Add desktop applications when desktop mode is enabled
+  ++ lib.optionals enableDesktop [
+    pkgs.firefox
+  ]
+  # Add resolution configuration tools when desktop with custom resolution is enabled
+  ++ lib.optionals (enableDesktop && hasResolution) [
+    pkgs.kdePackages.libkscreen
+    (pkgs.writeShellScriptBin "set-resolution" ''
+      # Set display resolution for virtual output
+      # Wait for display to be ready
+      sleep 2
+
+      # Try using kscreen-doctor (KDE's display configuration tool)
+      if command -v kscreen-doctor &>/dev/null; then
+        # List available outputs and set resolution
+        kscreen-doctor output.Virtual-1.mode.${resolution}@60 2>/dev/null || \
+        kscreen-doctor output.VIRTUAL-1.mode.${resolution}@60 2>/dev/null || \
+        kscreen-doctor output.1.mode.${resolution}@60 2>/dev/null || true
+      fi
+
+      # Fallback: try wlr-randr for wlroots-based compositors
+      if command -v wlr-randr &>/dev/null; then
+        wlr-randr --output Virtual-1 --mode ${resolution} 2>/dev/null || true
+      fi
+    '')
+  ];
+
+  # ==========================================================================
+  # QEMU/VM SETTINGS
+  # ==========================================================================
+
   virtualisation.vmVariant = {
     virtualisation.memorySize = memorySize;
     virtualisation.cores = cores;
     virtualisation.diskSize = diskSize;
+    virtualisation.graphics = enableDesktop;
 
-    # Disable graphics for headless operation
-    virtualisation.graphics = false;
-
-    # Configure writable store
-    # Always enable writable store to support nested VM creation
-    # The difference is in whether overlay changes persist to disk or tmpfs
+    # Writable store for nested VM support
     virtualisation.writableStore = true;
-
-    # When overlay flag is NOT set, persist overlay to disk for nested VM support
-    # When overlay flag IS set, use tmpfs for clean state on each boot (original behavior)
     virtualisation.writableStoreUseTmpfs = useOverlay;
 
-    # Use custom VM name for qcow2 file
+    # VM disk image name
     virtualisation.diskImage = "./${vmName}.qcow2";
 
-    # Port forwarding for SSH and development servers
-    virtualisation.forwardPorts = [
-      { from = "host"; host.port = 2222; guest.port = 22; }
-      { from = "host"; host.port = 3001; guest.port = 3001; }
-      { from = "host"; host.port = 9080; guest.port = 9080; }
-    ];
+    # Port forwarding (dynamic based on portMappings parameter)
+    virtualisation.forwardPorts = builtins.map (p: {
+      from = "host";
+      host.port = p.host;
+      guest.port = p.guest;
+    }) portMappings;
 
-    # Audio configuration
-    virtualisation.qemu.options = if enableAudio then [
-      # PulseAudio passthrough with both input and output
-      "-audiodev"
-      "pa,id=pa1,in.name=${vmName}-input,out.name=${vmName}-output"
-      "-device"
-      "intel-hda"
-      "-device"
-      "hda-duplex,audiodev=pa1"
-    ] else [];
+    # QEMU options: audio passthrough and display resolution
+    virtualisation.qemu.options =
+      # Audio passthrough options
+      lib.optionals enableAudio [
+        "-audiodev" "pa,id=pa1,in.name=${vmName}-input,out.name=${vmName}-output"
+        "-device" "intel-hda"
+        "-device" "hda-duplex,audiodev=pa1"
+      ];
 
-    # Shared folders configuration
+    # Shared folders
     virtualisation.sharedDirectories =
-      # Host Nix store (mounted as read-only to serve as binary cache)
-      # This allows nested VMs to access packages from the host without rebuilding
       {
         "nix-store" = {
           source = "/nix/store";
           target = "/nix/.ro-store";
         };
       } //
-      # Read-write shared folders
       (builtins.listToAttrs (builtins.map (path: {
         name = mkMountTag "rw" path;
         value = {
@@ -100,7 +162,6 @@ in
           target = "/mnt/host-rw/${builtins.baseNameOf path}";
         };
       }) sharedFoldersRW)) //
-      # Read-only shared folders (note: readonly is enforced via mount options, not via QEMU)
       (builtins.listToAttrs (builtins.map (path: {
         name = mkMountTag "ro" path;
         value = {
@@ -109,10 +170,8 @@ in
         };
       }) sharedFoldersRO));
 
-    # Mount shared folders as read-only where needed
+    # Filesystem mounts
     fileSystems =
-      # Mount host Nix store with optimized cache settings for binary cache usage
-      # This is the key to nested VM support - VMs can access host packages directly
       {
         "/nix/.ro-store" = {
           device = "nix-store";
@@ -121,7 +180,6 @@ in
           neededForBoot = true;
         };
       } //
-      # User-specified read-only shared folders
       (builtins.listToAttrs (builtins.map (path: {
         name = "/mnt/host-ro/${builtins.baseNameOf path}";
         value = {
@@ -132,503 +190,208 @@ in
       }) sharedFoldersRO));
   };
 
-  # Audio system configuration (enabled when audio passthrough is requested)
-  # Uses PulseAudio for compatibility with QEMU's -audiodev pa option
-  services.pulseaudio = {
-    enable = enableAudio;
-    systemWide = false;
-    support32Bit = true;
-  };
+  # ==========================================================================
+  # /etc/nixos TEMPLATES
+  # These are copied to /etc/nixos on first boot only.
+  # User can reset by deleting /etc/nixos and rebooting.
+  # ==========================================================================
 
-  nix.gc = {
-    automatic = true;
-    persistent = true;
-    randomizedDelaySec = "10min";
-    dates = "*-*-* 0/2:00:00";
-  };
+  # Module files - copied from actual source files
+  environment.etc."nixos-template/modules/configuration.nix".source = ./configuration.nix;
+  environment.etc."nixos-template/modules/users.nix".source = ./users.nix;
+  environment.etc."nixos-template/modules/packages.nix".source = ./packages.nix;
+  environment.etc."nixos-template/modules/networking.nix".source = ./networking.nix;
 
-  # Add audio group for users when audio is enabled
-  users.groups = pkgs.lib.mkIf enableAudio {
-    audio = {};
-  };
+  # Hardware configuration - static template
+  environment.etc."nixos-template/hardware-configuration.nix".source = ../templates/hardware-configuration.nix;
 
-  # Add users to audio group when audio is enabled
-  users.users.dennis.extraGroups = pkgs.lib.mkIf enableAudio [ "wheel" "networkmanager" "audio" ];
-  users.users.dvv.extraGroups = pkgs.lib.mkIf enableAudio [ "wheel" "networkmanager" "audio" ];
+  # VM-specific info (baked-in parameters)
+  environment.etc."nixos-template/vm-info.nix".text = ''
+    # VM-specific configuration
+    # Generated at VM build time with baked-in parameters.
 
-  # Create a nixos-rebuild wrapper that uses flakes by default
-  environment.systemPackages = [
-    (pkgs.writeShellScriptBin "nixos-rebuild" ''
-      # Wrapper for nixos-rebuild that automatically uses flakes
-      if [ -f /etc/nixos/flake.nix ]; then
-        # If no --flake argument provided, add it automatically
-        if ! echo "$@" | grep -q -- "--flake"; then
-          exec ${pkgs.nixos-rebuild}/bin/nixos-rebuild "$@" --flake /etc/nixos#${vmName}
-        fi
-      fi
-      # Fall through to normal nixos-rebuild
-      exec ${pkgs.nixos-rebuild}/bin/nixos-rebuild "$@"
-    '')
+    { config, pkgs, lib, ... }:
 
-    # Nix overlay cleanup script
-    (pkgs.writeShellScriptBin "nix-overlay-cleanup" (builtins.readFile ./nix-overlay-cleanup.sh))
-  ];
+    {
+      networking.hostName = lib.mkDefault "${vmName}";
 
-  # Systemd service for automatic Nix overlay cleanup
-  systemd.services.nix-overlay-gc = {
-    description = "Nix Overlay Garbage Collection";
-    serviceConfig = {
-      Type = "oneshot";
-      ExecStart = "/run/current-system/sw/bin/nix-overlay-cleanup --full";
-      StandardOutput = "journal";
-      StandardError = "journal";
-    };
-  };
+      # VM Specifications (reference only - these are QEMU settings)
+      # RAM: ${toString memorySize}MB | CPU: ${toString cores} cores | Disk: ${toString diskSize}MB
+      # Audio: ${if enableAudio then "enabled" else "disabled"} | Desktop: ${if enableDesktop then "KDE Plasma (${resolutionStr})" else "disabled"} | Overlay: ${if useOverlay then "tmpfs" else "disk"}
+      # Port forwards: ${portMappingsStr}
 
-  # Timer to run the cleanup hourly
-  systemd.timers.nix-overlay-gc = {
-    description = "Nix Overlay Garbage Collection Timer";
-    wantedBy = [ "timers.target" ];
-    timerConfig = {
-      OnCalendar = "hourly";
-      OnBootSec = "30min";
-      Persistent = true;
-    };
-  };
+      boot.loader.grub.enable = true;
+      boot.loader.grub.device = "/dev/vda";
 
-  # Install VM configuration flake templates at /etc/nixos-template
-  # These will be copied to /etc/nixos by the activation script
+      networking.useDHCP = false;
+      networking.interfaces.eth0.useDHCP = true;
+      networking.firewall.allowedTCPPorts = [ ${guestPortsStr} ];
+
+      services.qemuGuest.enable = true;
+
+      ${lib.optionalString enableAudio ''
+      services.pulseaudio = {
+        enable = true;
+        systemWide = false;
+        support32Bit = true;
+      };
+      users.groups.audio = {};
+      ''}
+      ${lib.optionalString enableDesktop ''
+      services.displayManager.sddm.enable = true;
+      services.displayManager.sddm.wayland.enable = true;
+      services.desktopManager.plasma6.enable = true;
+      ''}
+    }
+  '';
+
+  # Flake definition
   environment.etc."nixos-template/flake.nix".text = ''
     {
       description = "AI VM NixOS Configuration - ${vmName}";
 
-      inputs = {
-        nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-      };
+      inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
       outputs = { self, nixpkgs }:
-      let
-        system = "x86_64-linux";
-        pkgs = nixpkgs.legacyPackages.''${system};
-      in
       {
         nixosConfigurations.${vmName} = nixpkgs.lib.nixosSystem {
-          inherit system;
+          system = "x86_64-linux";
           modules = [
             ./hardware-configuration.nix
-            ./configuration.nix
+            ./vm-info.nix
+            ./modules/configuration.nix
+            ./modules/users.nix
+            ./modules/packages.nix
+            ./modules/networking.nix
           ];
         };
       };
     }
   '';
 
-  # Note: flake.lock is generated dynamically by the activation script
-  # instead of being hardcoded, to ensure it uses current nixpkgs revisions
-
-  # Install a complete configuration.nix for the VM
-  environment.etc."nixos-template/configuration.nix".text = ''
-    # ${vmName} VM Configuration
-    # Edit this file to customize your VM, then run: switch
-
-    { config, pkgs, ... }:
-
-    {
-      imports = [ ./hardware-configuration.nix ];
-
-      # VM Identity
-      networking.hostName = "${vmName}";
-
-      # Current VM specs (for reference):
-      # RAM: ${toString memorySize}MB
-      # CPU Cores: ${toString cores}
-      # Disk: ${toString diskSize}MB
-      # Audio: ${if enableAudio then "enabled" else "disabled"}
-      # Overlay: ${if useOverlay then "tmpfs (clean state each boot)" else "disk-based (persists across boots)"}
-      #
-      # Note: All VMs now support nested virtualization (building VMs inside VMs)
-      # thanks to writable Nix store with ${if useOverlay then "in-memory" else "disk-persisted"} overlay
-
-      # ==============================================================================
-      # SECURITY CONSIDERATIONS
-      # ==============================================================================
-      # This VM is configured for LOCAL DEVELOPMENT with convenience over security.
-      # Review these settings before using in production or shared environments:
-      #
-      # 1. EMPTY PASSWORDS (HIGH RISK)
-      #    Current: Users 'dennis' and 'dvv' have empty passwords (hashedPassword = "")
-      #    Risk: Anyone with network access can log in without credentials
-      #    Fix: Generate password with: mkpasswd -m sha-512
-      #         Then set: hashedPassword = "hash-from-mkpasswd";
-      #
-      # 2. PASSWORDLESS SUDO (HIGH RISK)
-      #    Current: wheelNeedsPassword = false (no password required for sudo)
-      #    Risk: Compromised user account = instant root access
-      #    Fix: Set wheelNeedsPassword = true to require password for sudo
-      #
-      # 3. SSH CONFIGURATION (MEDIUM RISK)
-      #    Current: PasswordAuthentication = true, PermitEmptyPasswords = true
-      #    Risk: Allows SSH login without password
-      #    Mitigation: VM accessible only via host port forwarding (host:2222 -> guest:22)
-      #    Fix for production:
-      #      - Add SSH keys: openssh.authorizedKeys.keys = [ "ssh-rsa AAAA..." ];
-      #      - Disable password auth: PasswordAuthentication = false;
-      #      - Disable empty passwords: PermitEmptyPasswords = false;
-      #
-      # 4. FIREWALL (NOW ENABLED)
-      #    Current: Firewall enabled with ports 22, 3001, 9080 allowed
-      #    Status: SECURE - Only necessary ports are open
-      #    Customize: Add ports to networking.firewall.allowedTCPPorts as needed
-      #
-      # 5. AUTO-LOGIN (LOW RISK for VMs)
-      #    Current: User 'dennis' auto-logs in on console
-      #    Risk: Anyone with console access gets user shell
-      #    Note: Console is accessible only from host via QEMU
-      #
-      # PRODUCTION SECURITY CHECKLIST:
-      # [ ] Set strong passwords for all users (hashedPassword)
-      # [ ] Add SSH public keys (openssh.authorizedKeys.keys)
-      # [ ] Disable password SSH authentication (PasswordAuthentication = false)
-      # [ ] Enable sudo password requirement (wheelNeedsPassword = true)
-      # [ ] Review firewall rules (networking.firewall.allowedTCPPorts)
-      # [ ] Disable auto-login if needed (services.getty.autologinUser = null)
-      # [ ] Review user permissions and groups (extraGroups)
-      #
-      # For more information, see:
-      # - NixOS Security: https://nixos.org/manual/nixos/stable/#sec-security
-      # - SSH Hardening: https://nixos.wiki/wiki/SSH_public_key_authentication
-      # ==============================================================================
-
-      # System configuration
-      boot.loader.grub.enable = true;
-      boot.loader.grub.device = "/dev/vda";
-
-      # Enable flakes
-      nix.settings.experimental-features = [ "nix-command" "flakes" ];
-      system.stateVersion = "23.11";
-
-      # Networking
-      networking.useDHCP = false;
-      networking.interfaces.eth0.useDHCP = true;
-
-      # Firewall configuration (enabled by default for security)
-      networking.firewall = {
-        enable = true;
-        allowedTCPPorts = [ 22 3001 9080 ];
-        # Add more ports as needed for your applications
-      };
-
-      # User configuration
-      # SECURITY: Users have empty passwords for development convenience
-      # For production: Generate with 'mkpasswd -m sha-512' and replace hashedPassword
-      users.users.dennis = {
-        isNormalUser = true;
-        extraGroups = [ "wheel" "networkmanager"${if enableAudio then " \"audio\"" else ""} ];
-        hashedPassword = "";  # INSECURE: Empty password - change for production
-        shell = pkgs.fish;
-        openssh.authorizedKeys.keys = [
-          # Add your SSH public key here for key-based authentication:
-          # "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC... user@host"
-        ];
-      };
-
-      users.users.dvv = {
-        isNormalUser = true;
-        extraGroups = [ "wheel" "networkmanager"${if enableAudio then " \"audio\"" else ""} ];
-        hashedPassword = "";  # INSECURE: Empty password - change for production
-        shell = pkgs.fish;
-        openssh.authorizedKeys.keys = [ ];
-      };
-
-      # SECURITY: Passwordless sudo enabled for development convenience
-      # For production: Set to true to require password for sudo
-      security.sudo.wheelNeedsPassword = false;
-
-      # Auto-login for console access (only accessible from host via QEMU)
-      services.getty.autologinUser = "dennis";
-
-      programs.fish = {
-        enable = true;
-        interactiveShellInit = '''
-          fish_add_path --prepend /run/wrappers/bin
-          fish_add_path --append /run/current-system/sw/bin
-        ''';
-      };
-
-      # Services
-      services.openssh = {
-        enable = true;
-        settings = {
-          PasswordAuthentication = true;
-          PermitEmptyPasswords = true;  # Required for empty password login
-          PermitRootLogin = "no";
-          # For production, add your SSH key to users.users.<name>.openssh.authorizedKeys.keys
-          # and set: PasswordAuthentication = false; PermitEmptyPasswords = false;
+  # Flake lock file (pins nixpkgs to same version as host)
+  environment.etc."nixos-template/flake.lock".text = builtins.toJSON {
+    nodes = {
+      nixpkgs = {
+        locked = {
+          type = "github";
+          owner = "NixOS";
+          repo = "nixpkgs";
+          rev = nixpkgsRev;
+          narHash = nixpkgsNarHash;
+        };
+        original = {
+          type = "github";
+          owner = "NixOS";
+          repo = "nixpkgs";
+          ref = "nixos-unstable";
         };
       };
-
-      services.qemuGuest.enable = true;
-
-      ${if enableAudio then ''
-      # Audio configuration
-      services.pulseaudio = {
-        enable = true;
-        systemWide = false;
-        support32Bit = true;
+      root = {
+        inputs = {
+          nixpkgs = "nixpkgs";
+        };
       };
+    };
+    root = "root";
+    version = 7;
+  };
 
-      users.groups.audio = {};
-      '' else ""}
+  # Auto-run resolution script at user login (for KDE Plasma)
+  # Only created when desktop mode is enabled with a custom resolution
+  environment.etc."xdg/autostart/set-resolution.desktop" = lib.mkIf (enableDesktop && hasResolution) {
+    text = ''
+      [Desktop Entry]
+      Type=Application
+      Name=Set Display Resolution
+      Exec=set-resolution
+      X-KDE-autostart-phase=2
+    '';
+  };
 
-      # Packages
-      nixpkgs.config.allowUnfree = true;
-      nixpkgs.config.allowUnfreePredicate = pkg:
-        builtins.elem (pkgs.lib.getName pkg) [ "claude-code" ];
-
-      environment.systemPackages = with pkgs; [
-        # Development tools
-        git
-        curl
-        wget
-        vim
-        nano
-        htop
-        tree
-        unzip
-        file
-        jq
-
-        # Build tools
-        gcc
-        gnumake
-        pkg-config
-
-        # Claude Code
-        claude-code
-
-        # Additional development packages
-        nodejs_22
-        python3
-        rustc
-        cargo
-        go
-
-        # Add your packages here
-      ];
-
-      # Add your custom configuration here
-      # Examples:
-      # environment.systemPackages = with pkgs; [ firefox ];
-      # services.docker.enable = true;
-      # virtualisation.docker.enable = true;
-
-      # To rebuild the system after making changes, run:
-      #   sudo nixos-rebuild switch
-      # or use the convenience command:
-      #   rebuild
-    }
-  '';
-
-  # Generate a basic hardware-configuration.nix for the VM
-  environment.etc."nixos-template/hardware-configuration.nix".text = ''
-    # Hardware configuration for ${vmName} VM
-    # Generated automatically - do not edit
-
-    { config, lib, pkgs, modulesPath, ... }:
-
-    {
-      imports = [ (modulesPath + "/profiles/qemu-guest.nix") ];
-
-      boot.initrd.availableKernelModules = [ "ahci" "xhci_pci" "virtio_pci" "sr_mod" "virtio_blk" ];
-      boot.initrd.kernelModules = [ ];
-      boot.kernelModules = [ ];
-      boot.extraModulePackages = [ ];
-
-      fileSystems."/" = {
-        device = "/dev/disk/by-label/nixos";
-        fsType = "ext4";
-      };
-
-      swapDevices = [ ];
-
-      networking.useDHCP = lib.mkDefault true;
-      nixpkgs.hostPlatform = lib.mkDefault "x86_64-linux";
-    }
-  '';
-
-  # Add a simple 'rebuild' command for easy VM rebuilds using flakes
+  # Rebuild script
   environment.etc."nixos-template/rebuild".source = pkgs.writeShellScript "vm-rebuild" ''
     #!/usr/bin/env bash
     set -euo pipefail
-
-    # Simple VM rebuild command using flakes
-    echo "🔄 Rebuilding ${vmName} VM configuration with flakes..."
-    echo ""
-
-    # Check if configuration files exist
+    echo "Rebuilding VM configuration..."
     if [[ ! -f /etc/nixos/flake.nix ]]; then
-        echo "❌ Error: /etc/nixos/flake.nix not found"
-        exit 1
+      echo "Error: /etc/nixos/flake.nix not found"
+      exit 1
     fi
-
-    if [[ ! -f /etc/nixos/configuration.nix ]]; then
-        echo "❌ Error: /etc/nixos/configuration.nix not found"
-        exit 1
-    fi
-
-    # Change to /etc/nixos directory (important for flakes)
-    cd /etc/nixos
-
-    # Initialize git repo if it doesn't exist (flakes need git)
-    if [[ ! -d .git ]]; then
-        echo "📝 Initializing git repository for flake..."
-        git init --quiet
-        git add .
-        git commit --quiet -m "Initial VM configuration"
-    fi
-
-    # Commit any changes (flakes require clean git state)
-    if git status --porcelain | grep -q .; then
-        git add .
-        git commit --quiet -m "Update VM configuration $(date)"
-    fi
-
-    # Run the rebuild with flakes
-    echo "🔄 Rebuilding with flakes..."
-    if sudo nixos-rebuild switch --flake .#${vmName} "$@"; then
-        echo ""
-        echo "✅ VM configuration rebuilt successfully with flakes!"
-        echo "   Changes are now active."
+    if sudo nixos-rebuild switch --flake "path:/etc/nixos#${vmName}" "$@"; then
+      echo "Rebuild successful!"
     else
-        echo ""
-        echo "❌ Flake rebuild failed. Check the error messages above."
-        echo ""
-        echo "💡 Troubleshooting tips:"
-        echo "   - Check your configuration.nix for syntax errors"
-        echo "   - Run 'nix flake check .' to validate the flake"
-        echo "   - Try: sudo nixos-rebuild switch --flake .#${vmName} --show-trace"
-        exit 1
+      echo "Rebuild failed. Try: nix flake check path:/etc/nixos"
+      exit 1
     fi
   '';
 
-  # Set up /etc/nixos as a writable directory with flake configuration
-  system.activationScripts.vm-nixos-setup = {
-    text = ''
-      # Create /etc/nixos as a real writable directory (not a symlink)
-      if [ ! -d /etc/nixos ] || [ -L /etc/nixos ]; then
-        rm -rf /etc/nixos
-        mkdir -p /etc/nixos
-      fi
-
-      # Copy template files to /etc/nixos if they don't exist or are older
-      # Note: flake.lock is NOT copied - it will be generated by nix flake update
-      for file in flake.nix configuration.nix hardware-configuration.nix rebuild README.md; do
-        if [ ! -f /etc/nixos/$file ] || [ /etc/nixos-template/$file -nt /etc/nixos/$file ]; then
-          cp -f /etc/nixos-template/$file /etc/nixos/$file
-          chmod 644 /etc/nixos/$file
-        fi
-      done
-
-      # Make rebuild script executable
-      chmod +x /etc/nixos/rebuild
-      ln -sf /etc/nixos/rebuild /run/current-system/sw/bin/rebuild
-
-      # Initialize git repo if it doesn't exist (required for flakes)
-      if [ ! -d /etc/nixos/.git ]; then
-        cd /etc/nixos
-        ${pkgs.git}/bin/git init --quiet
-        ${pkgs.git}/bin/git config user.name "VM User"
-        ${pkgs.git}/bin/git config user.email "user@vm.local"
-        ${pkgs.git}/bin/git add .
-        ${pkgs.git}/bin/git commit --quiet -m "Initial VM configuration"
-      fi
-
-      # Generate flake.lock if it doesn't exist (uses current nixpkgs)
-      if [ ! -f /etc/nixos/flake.lock ]; then
-        cd /etc/nixos
-        echo "Generating flake.lock with current nixpkgs..."
-        ${pkgs.nix}/bin/nix flake update --commit-lock-file 2>&1 || true
-      fi
-    '';
-    deps = [ ];
-  };
-
-  # Add a helpful README
+  # README
   environment.etc."nixos-template/README.md".text = ''
     # ${vmName} VM Configuration
 
-    This directory contains the NixOS configuration for your VM.
-
-    ## Quick Commands
-
+    ## Quick Start
     ```bash
-    # Standard NixOS rebuild (automatically uses flakes)
-    sudo nixos-rebuild switch
-
-    # Alternative: use the convenience command
-    rebuild
-
-    # Other rebuild operations
-    sudo nixos-rebuild test      # Test without making it boot default
-    sudo nixos-rebuild boot      # Set as boot default without switching
-
-    # Flake utilities
-    nix flake check /etc/nixos
-    nix flake update /etc/nixos
-
-    # Install packages temporarily
-    nix shell nixpkgs#package-name
+    sudo nano /etc/nixos/modules/packages.nix  # Add packages
+    rebuild                                      # Apply changes
     ```
 
-    ## Usage Examples
-
-    ```bash
-    # Edit the configuration
-    sudo nano /etc/nixos/configuration.nix
-
-    # Add packages (add to environment.systemPackages)
-    environment.systemPackages = with pkgs; [ firefox git htop ];
-
-    # Rebuild the system (automatically uses flakes)
-    sudo nixos-rebuild switch
-
-    # Or use the convenience command
-    rebuild
-
-    # Check flake for errors before rebuilding
-    nix flake check /etc/nixos
+    ## Structure
+    ```
+    /etc/nixos/
+    ├── flake.nix              # Flake definition
+    ├── flake.lock             # Pinned nixpkgs (same as host)
+    ├── vm-info.nix            # VM parameters (RAM: ${toString memorySize}MB, CPU: ${toString cores}, Disk: ${toString diskSize}MB)
+    ├── hardware-configuration.nix
+    └── modules/
+        ├── configuration.nix  # Firewall, GC, base settings
+        ├── users.nix          # User accounts
+        ├── packages.nix       # Installed packages
+        └── networking.nix     # SSH config
     ```
 
-    ## Flake Benefits
+    ## Update nixpkgs
+    ```bash
+    nix flake update path:/etc/nixos && rebuild
+    ```
 
-    - **Reproducible**: Exact dependency versions locked in flake.lock
-    - **Modern**: Uses the latest Nix flakes technology
-    - **Isolated**: Dependencies are tracked and version-controlled
-    - **Future-proof**: Flakes are the future of Nix configuration
-
-    ## Configuration Files
-
-    - **flake.nix**: Main flake configuration with VM parameters
-    - **configuration.nix**: Your custom system configuration
-    - **hardware-configuration.nix**: Hardware-specific settings (auto-generated)
-
-    ## Current VM Specifications
-
-    - **RAM**: ${toString memorySize}MB
-    - **CPU Cores**: ${toString cores}
-    - **Disk Size**: ${toString diskSize}MB
-    - **Audio**: ${if enableAudio then "enabled" else "disabled"}
-    - **Overlay FS**: ${if useOverlay then "tmpfs (clean state)" else "disk-based (persistent)"}
-    - **Nested VMs**: Supported (writable Nix store enabled)
-
-    ## Customization
-
-    Edit \`configuration.nix\` to add packages, services, or other configuration.
-    The VM parameters (RAM, CPU, etc.) are defined in \`flake.nix\`.
-
-    ## Host System
-
-    This VM was created with the AI VM selector tool.
-    Original host configuration: /home/dennis/Projects/nixos-configs/ai-vm
+    ## Reset to defaults
+    ```bash
+    sudo rm -rf /etc/nixos && sudo reboot
+    ```
   '';
+
+  # ==========================================================================
+  # ACTIVATION SCRIPT
+  # Copies templates to /etc/nixos on first boot only.
+  # ==========================================================================
+
+  system.activationScripts.vm-nixos-setup = {
+    text = ''
+      # Only create /etc/nixos if it doesn't exist
+      if [ ! -d /etc/nixos ]; then
+        echo "First boot: setting up /etc/nixos from templates..."
+
+        mkdir -p /etc/nixos/modules
+
+        # Copy all template files
+        cp /etc/nixos-template/flake.nix /etc/nixos/
+        cp /etc/nixos-template/flake.lock /etc/nixos/
+        cp /etc/nixos-template/vm-info.nix /etc/nixos/
+        cp /etc/nixos-template/hardware-configuration.nix /etc/nixos/
+        cp /etc/nixos-template/rebuild /etc/nixos/
+        cp /etc/nixos-template/README.md /etc/nixos/
+        cp /etc/nixos-template/modules/*.nix /etc/nixos/modules/
+
+        chmod 644 /etc/nixos/*.nix /etc/nixos/*.lock /etc/nixos/*.md /etc/nixos/modules/*.nix
+        chmod +x /etc/nixos/rebuild
+
+        echo "/etc/nixos setup complete."
+      fi
+
+      # Always ensure rebuild is in PATH
+      ln -sf /etc/nixos/rebuild /run/current-system/sw/bin/rebuild 2>/dev/null || true
+    '';
+    deps = [ ];
+  };
 }
