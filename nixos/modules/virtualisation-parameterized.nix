@@ -316,7 +316,7 @@ in
       outputs = { self, nixpkgs }:
       {
         nixosConfigurations.${vmName} = nixpkgs.lib.nixosSystem {
-          system = "x86_64-linux";
+          system = "${pkgs.system}";
           modules = [
             ./hardware-configuration.nix
             ./vm-info.nix
@@ -430,7 +430,7 @@ in
   system.activationScripts.vm-nixos-setup = {
     text = ''
       # Only create /etc/nixos if it doesn't exist
-      if [ ! -d /etc/nixos ]; then
+      if [[ ! -d /etc/nixos ]] || [[ -z "$( ls -A '/path/to/dir' )" ]]; then
         echo "First boot: setting up /etc/nixos from templates..."
 
         mkdir -p /etc/nixos/modules
