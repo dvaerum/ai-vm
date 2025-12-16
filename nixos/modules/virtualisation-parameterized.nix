@@ -1,39 +1,72 @@
 # VM/QEMU-specific configuration for AI VM
 # This module contains all VM-specific settings: virtualisation, templates, activation.
 
-{ config, pkgs, lib, memorySize ? 8192, cores ? 2, diskSize ? 51200, useOverlay ? false, sharedFoldersRW ? [], sharedFoldersRO ? [], vmName ? "ai-vm", enableAudio ? false, enableDesktop ? false, portMappings ? [{ host = 2222; guest = 22; }], resolution ? null, nixpkgsRev ? "unknown", nixpkgsNarHash ? "unknown", ... }:
+{
+  config,
+  pkgs,
+  lib,
+  memorySize ? 8192,
+  cores ? 2,
+  diskSize ? 51200,
+  useOverlay ? false,
+  sharedFoldersRW ? [ ],
+  sharedFoldersRO ? [ ],
+  vmName ? "ai-vm",
+  enableAudio ? false,
+  enableDesktop ? false,
+  portMappings ? [
+    {
+      host = 2222;
+      guest = 22;
+    }
+  ],
+  resolution ? null,
+  nixpkgsRev ? "unknown",
+  nixpkgsNarHash ? "unknown",
+  ...
+}:
 
 let
   # Generate short mount tag from path (max 31 chars for QEMU)
-  mkMountTag = prefix: path:
+  mkMountTag =
+    prefix: path:
     let
       basename = builtins.baseNameOf path;
       pathHash = builtins.substring 0 8 (builtins.hashString "sha256" path);
       maxBasename = 19;
-      shortBasename = if builtins.stringLength basename > maxBasename
-                     then builtins.substring 0 maxBasename basename
-                     else basename;
-    in "${prefix}${pathHash}-${shortBasename}";
+      shortBasename =
+        if builtins.stringLength basename > maxBasename then
+          builtins.substring 0 maxBasename basename
+        else
+          basename;
+    in
+    "${prefix}${pathHash}-${shortBasename}";
 
   # Format port mappings for display (e.g., "2222→22, 3001→3001")
-  portMappingsStr = builtins.concatStringsSep ", " (builtins.map (p: "${toString p.host}→${toString p.guest}") portMappings);
+  portMappingsStr = builtins.concatStringsSep ", " (
+    builtins.map (p: "${toString p.host}→${toString p.guest}") portMappings
+  );
 
   # Get list of guest ports for firewall
   guestPorts = builtins.map (p: p.guest) portMappings;
   guestPortsStr = builtins.concatStringsSep " " (builtins.map toString guestPorts);
 
   # Parse resolution string (e.g., "1920x1080") into width and height
-  parseResolution = res:
-    if res == null then null
+  parseResolution =
+    res:
+    if res == null then
+      null
     else
       let
         parts = builtins.match "([0-9]+)x([0-9]+)" res;
       in
-      if parts == null then null
-      else {
-        width = builtins.elemAt parts 0;
-        height = builtins.elemAt parts 1;
-      };
+      if parts == null then
+        null
+      else
+        {
+          width = builtins.elemAt parts 0;
+          height = builtins.elemAt parts 1;
+        };
 
   parsedResolution = parseResolution resolution;
   hasResolution = parsedResolution != null;
@@ -56,11 +89,19 @@ in
 
   # Add audio group for users when audio is enabled
   users.groups = lib.mkIf enableAudio {
-    audio = {};
+    audio = { };
   };
 
-  users.users.dennis.extraGroups = lib.mkIf enableAudio [ "wheel" "networkmanager" "audio" ];
-  users.users.dvv.extraGroups = lib.mkIf enableAudio [ "wheel" "networkmanager" "audio" ];
+  users.users.dennis.extraGroups = lib.mkIf enableAudio [
+    "wheel"
+    "networkmanager"
+    "audio"
+  ];
+  users.users.dvv.extraGroups = lib.mkIf enableAudio [
+    "wheel"
+    "networkmanager"
+    "audio"
+  ];
 
   # Desktop environment (KDE Plasma with Wayland)
   services.displayManager.sddm.enable = enableDesktop;
@@ -142,52 +183,69 @@ in
     virtualisation.qemu.options =
       # Audio passthrough options
       lib.optionals enableAudio [
-        "-audiodev" "pa,id=pa1,in.name=${vmName}-input,out.name=${vmName}-output"
-        "-device" "intel-hda"
-        "-device" "hda-duplex,audiodev=pa1"
+        "-audiodev"
+        "pa,id=pa1,in.name=${vmName}-input,out.name=${vmName}-output"
+        "-device"
+        "intel-hda"
+        "-device"
+        "hda-duplex,audiodev=pa1"
       ];
 
     # Shared folders
-    virtualisation.sharedDirectories =
-      {
-        "nix-store" = {
-          source = "/nix/store";
-          target = "/nix/.ro-store";
-        };
-      } //
-      (builtins.listToAttrs (builtins.map (path: {
+    virtualisation.sharedDirectories = {
+      "nix-store" = {
+        source = "/nix/store";
+        target = "/nix/.ro-store";
+      };
+    }
+    // (builtins.listToAttrs (
+      builtins.map (path: {
         name = mkMountTag "rw" path;
         value = {
           source = path;
           target = "/mnt/host-rw/${builtins.baseNameOf path}";
         };
-      }) sharedFoldersRW)) //
-      (builtins.listToAttrs (builtins.map (path: {
+      }) sharedFoldersRW
+    ))
+    // (builtins.listToAttrs (
+      builtins.map (path: {
         name = mkMountTag "ro" path;
         value = {
           source = path;
           target = "/mnt/host-ro/${builtins.baseNameOf path}";
         };
-      }) sharedFoldersRO));
+      }) sharedFoldersRO
+    ));
 
     # Filesystem mounts
-    fileSystems =
-      {
-        "/nix/.ro-store" = {
-          device = "nix-store";
-          fsType = "9p";
-          options = ["trans=virtio" "version=9p2000.L" "msize=104857600" "cache=loose" "ro"];
-          neededForBoot = true;
-        };
-      } //
-      (builtins.listToAttrs (builtins.map (path: {
+    fileSystems = {
+      "/nix/.ro-store" = {
+        device = "nix-store";
+        fsType = "9p";
+        options = [
+          "trans=virtio"
+          "version=9p2000.L"
+          "msize=104857600"
+          "cache=loose"
+          "ro"
+        ];
+        neededForBoot = true;
+      };
+    }
+    // (builtins.listToAttrs (
+      builtins.map (path: {
         name = "/mnt/host-ro/${builtins.baseNameOf path}";
         value = {
           device = mkMountTag "ro" path;
           fsType = "9p";
-          options = ["trans=virtio" "version=9p2000.L" "ro"];
+          options = [
+            "trans=virtio"
+            "version=9p2000.L"
+            "ro"
+          ];
         };
-      }) sharedFoldersRO));
+      }) sharedFoldersRO
+    ));
   };
 
   # ==========================================================================
@@ -203,7 +261,8 @@ in
   environment.etc."nixos-template/modules/networking.nix".source = ./networking.nix;
 
   # Hardware configuration - static template
-  environment.etc."nixos-template/hardware-configuration.nix".source = ../templates/hardware-configuration.nix;
+  environment.etc."nixos-template/hardware-configuration.nix".source =
+    ../templates/hardware-configuration.nix;
 
   # VM-specific info (baked-in parameters)
   environment.etc."nixos-template/vm-info.nix".text = ''
@@ -217,7 +276,9 @@ in
 
       # VM Specifications (reference only - these are QEMU settings)
       # RAM: ${toString memorySize}MB | CPU: ${toString cores} cores | Disk: ${toString diskSize}MB
-      # Audio: ${if enableAudio then "enabled" else "disabled"} | Desktop: ${if enableDesktop then "KDE Plasma (${resolutionStr})" else "disabled"} | Overlay: ${if useOverlay then "tmpfs" else "disk"}
+      # Audio: ${if enableAudio then "enabled" else "disabled"} | Desktop: ${
+        if enableDesktop then "KDE Plasma (${resolutionStr})" else "disabled"
+      } | Overlay: ${if useOverlay then "tmpfs" else "disk"}
       # Port forwards: ${portMappingsStr}
 
       boot.loader.grub.enable = true;
@@ -230,17 +291,17 @@ in
       services.qemuGuest.enable = true;
 
       ${lib.optionalString enableAudio ''
-      services.pulseaudio = {
-        enable = true;
-        systemWide = false;
-        support32Bit = true;
-      };
-      users.groups.audio = {};
+        services.pulseaudio = {
+          enable = true;
+          systemWide = false;
+          support32Bit = true;
+        };
+        users.groups.audio = {};
       ''}
       ${lib.optionalString enableDesktop ''
-      services.displayManager.sddm.enable = true;
-      services.displayManager.sddm.wayland.enable = true;
-      services.desktopManager.plasma6.enable = true;
+        services.displayManager.sddm.enable = true;
+        services.displayManager.sddm.wayland.enable = true;
+        services.desktopManager.plasma6.enable = true;
       ''}
     }
   '';
