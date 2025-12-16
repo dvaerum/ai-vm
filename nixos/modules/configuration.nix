@@ -2,16 +2,23 @@
 # This module contains pure system settings with no VM-specific parameters.
 # It can be used both on the host (during VM build) and inside the VM.
 
-{ config, pkgs, lib, ... }:
+{
+  config,
+  pkgs,
+  lib,
+  ...
+}:
 
 {
   # Base NixOS settings
-  nix.settings.experimental-features = [ "nix-command" "flakes" ];
+  nix.settings.experimental-features = [
+    "nix-command"
+    "flakes"
+  ];
   system.stateVersion = "23.11";
 
   # Unfree packages allowlist
-  nixpkgs.config.allowUnfreePredicate = pkg:
-    builtins.elem (lib.getName pkg) [ "claude-code" ];
+  nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [ "claude-code" ];
 
   # Firewall configuration
   # SECURITY: Firewall is enabled by default
